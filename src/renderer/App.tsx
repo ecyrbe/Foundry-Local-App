@@ -311,7 +311,6 @@ export function App() {
   const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { resolvedTheme } = useTheme();
   const loadedModelCount = catalogModels.filter((model) => model.loaded).length;
 
   useEffect(() => {
@@ -426,17 +425,20 @@ export function App() {
         <Sidebar collapsed={sidebarCollapsed} onToggle={() => {
           setSidebarCollapsed((currentValue) => !currentValue);
         }}>
-          <SidebarHeader className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">Foundry Local</p>
-            {!sidebarCollapsed ? (
-              <>
-                <h1 className="mt-2 text-xl font-semibold tracking-tight">Desktop Control Surface</h1>
-                <p className="mt-2 break-words text-sm leading-6 text-muted-foreground">
-                  Electron, React Router, Tailwind, and shadcn/ui are wired and ready for feature work.
-                </p>
-                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-muted-foreground">Theme: {resolvedTheme}</p>
-              </>
-            ) : null}
+          <SidebarHeader className={cn('min-w-0', sidebarCollapsed ? 'px-3' : '')}>
+            {sidebarCollapsed ? (
+              <div className="flex justify-center">
+                <div
+                  className="flex size-10 items-center justify-center rounded-xl border border-border/70 bg-background/60 text-primary"
+                  aria-label="Foundry"
+                  title="Foundry"
+                >
+                  <span className="text-sm font-semibold tracking-[0.08em]">F</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs font-medium uppercase tracking-[0.24em] text-primary">Foundry Local</p>
+            )}
           </SidebarHeader>
 
           <SidebarContent>

@@ -1,7 +1,10 @@
+import { FoundryLocalConfig } from "foundry-local-sdk";
+
 export const FOUNDRY_LOCAL_APP_NAME = 'foundry';
 
-export const foundryLocalBootstrapConfig = {
+export const foundryLocalBootstrapConfig: FoundryLocalConfig = {
   appName: FOUNDRY_LOCAL_APP_NAME,
+  
   logLevel: 'info' as const
 };
 

@@ -9,6 +9,9 @@ import {
   type FoundryErrorView
 } from '../shared/foundry-state.js';
 
+const userDataPath = app.getPath('userData');
+console.log(`Electron userData path: ${userDataPath}`);
+
 function toErrorView(error: unknown): FoundryErrorView {
   if (error instanceof Error) {
     return {
@@ -151,10 +154,7 @@ export class FoundryAppService {
 
   private getStartupConfig(): FoundryLocalConfig {
     if (!this.startupConfig) {
-      this.startupConfig = {
-        ...foundryLocalBootstrapConfig,
-        appDataDir: app.getPath('userData')
-      };
+      this.startupConfig = foundryLocalBootstrapConfig;
     }
 
     return this.startupConfig;
