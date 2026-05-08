@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { Check, Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Monitor, Moon, Play, Plus, RefreshCw, Search, SendHorizontal, Settings, Square, Sun, Trash2 } from 'lucide-react';
+import { Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Moon, Play, Plus, RefreshCw, Search, SendHorizontal, Settings, Square, Sun, Trash2, XCircle } from 'lucide-react';
 import { useTheme, type ThemePreference } from '@/components/theme-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -249,15 +249,15 @@ function CatalogPage(props: {
   );
 }
 
-function ThemeSettingCard() {
+function SettingsPage() {
   const { resolvedTheme, setThemePreference, themePreference } = useTheme();
 
-  const options: Array<{ value: ThemePreference; label: string; description: string; icon: typeof Monitor }> = [
+  const options: Array<{ value: ThemePreference; label: string; description: string; icon: typeof Sun }> = [
     {
       value: 'system',
       label: 'System',
       description: `Follow the OS setting. Currently using ${resolvedTheme}.`,
-      icon: Monitor
+      icon: Cpu
     },
     {
       value: 'light',
@@ -308,7 +308,6 @@ function ThemeSettingCard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
                       <span className="min-w-0 break-words text-sm font-medium text-foreground">{option.label}</span>
-                      {isActive ? <Check className="size-4 text-primary" /> : null}
                     </div>
                     <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{option.description}</p>
                   </div>
@@ -469,23 +468,30 @@ function ChatPage(props: {
   activeSession: FoundryChatSessionDetailView | null;
   availableModels: FoundryCatalogModelView[];
   chatError: string | null;
+  deletingSessionId: string | null;
   draftMessage: string;
   isCreatingSession: boolean;
   isLoadingSession: boolean;
   isSendingMessage: boolean;
   onCreateSession: (modelId: string) => Promise<void>;
+  onDeleteSession: (sessionId: string) => Promise<void>;
   onDraftMessageChange: (value: string) => void;
+  onLoadSessionModel: (sessionId: string) => Promise<void>;
   onOpenSession: (sessionId: string) => Promise<void>;
   onSendMessage: () => Promise<void>;
+  onUnloadSessionModel: (sessionId: string) => Promise<void>;
+  modelActionByModelId: Record<string, 'loading' | 'unloading'>;
   sessions: FoundryChatSessionView[];
 }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const messageListRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!selectedModelId && props.availableModels.length > 0) {
-      setSelectedModelId(props.availableModels[0].id);
+    if (props.availableModels.some((model) => model.id === selectedModelId)) {
+      return;
     }
+
+    setSelectedModelId(props.availableModels[0]?.id ?? '');
   }, [props.availableModels, selectedModelId]);
 
   useEffect(() => {
@@ -501,67 +507,136 @@ function ChatPage(props: {
   const activeModelStillAvailable = props.activeSession
     ? props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)
     : true;
+  const activeSessionSummary = props.activeSession
+    ? props.sessions.find((session) => session.id === props.activeSession?.session.id) ?? null
+    : null;
+  const activeSessionModelAction = activeSessionSummary ? props.modelActionByModelId[activeSessionSummary.modelId] : undefined;
+  const activeSessionModelLoaded = activeSessionSummary?.modelLoaded ?? false;
 
   return (
-    <div className="grid min-h-[calc(100vh-10rem)] gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <Card className={cn(panelSurfaceClassName, 'min-h-0 xl:max-h-full')}>
+    <div className="grid min-h-[calc(100vh-10rem)] gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+      <div className="space-y-4">
+        <Card className={panelSurfaceClassName}>
+          <CardHeader>
+            <CardTitle>New session</CardTitle>
+            <CardDescription>
+              Create a chat history first, then explicitly load its model when you want to use it.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-2">
+              <label className="block text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Downloaded text model</label>
+              <select
+                value={selectedModelId}
+                onChange={(event) => {
+                  setSelectedModelId(event.target.value);
+                }}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={props.availableModels.length === 0 || props.isCreatingSession}
+              >
+                {props.availableModels.length === 0 ? <option value="">No downloaded text models available</option> : null}
+                {props.availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>{model.name} ({model.alias})</option>
+                ))}
+              </select>
+            </div>
+            <Button type="button" className="w-full" disabled={!selectedModelId || props.isCreatingSession} onClick={() => {
+              void props.onCreateSession(selectedModelId);
+            }}>
+              {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              {props.isCreatingSession ? 'Creating session' : 'Create session'}
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className={cn(panelSurfaceClassName, 'min-h-0 xl:max-h-[calc(100vh-13rem)] xl:flex xl:flex-col')}>
         <CardHeader>
           <CardTitle>Sessions</CardTitle>
           <CardDescription>
-            Start a new chat with a downloaded model and reopen prior sessions after restarting the app.
+            Keep multiple conversation histories and load only the model you want to use right now.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label className="block text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Downloaded model</label>
-            <select
-              value={selectedModelId}
-              onChange={(event) => {
-                setSelectedModelId(event.target.value);
-              }}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={props.availableModels.length === 0 || props.isCreatingSession}
-            >
-              {props.availableModels.length === 0 ? <option value="">No downloaded models available</option> : null}
-              {props.availableModels.map((model) => (
-                <option key={model.id} value={model.id}>{model.name} ({model.alias})</option>
-              ))}
-            </select>
-          </div>
-          <Button type="button" className="w-full" disabled={!selectedModelId || props.isCreatingSession} onClick={() => {
-            void props.onCreateSession(selectedModelId);
-          }}>
-            {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            New session
-          </Button>
+        <CardContent className="min-h-0 space-y-3 xl:flex-1 xl:overflow-auto">
+          {props.sessions.length > 0 ? props.sessions.map((session) => {
+            const isActive = props.activeSession?.session.id === session.id;
+            const sessionAction = props.modelActionByModelId[session.modelId];
+            const sessionStatusLabel = sessionAction === 'loading'
+              ? 'Loading'
+              : sessionAction === 'unloading'
+                ? 'Unloading'
+                : session.modelLoaded
+                  ? 'Loaded'
+                  : 'Not loaded';
+            const sessionStatusVariant = sessionAction === 'loading' || sessionAction === 'unloading'
+              ? 'outline'
+              : session.modelLoaded
+                ? 'success'
+                : 'default';
 
-          <div className="space-y-2">
-            {props.sessions.length > 0 ? props.sessions.map((session) => {
-              const isActive = props.activeSession?.session.id === session.id;
-
-              return (
+            return (
+              <div
+                key={session.id}
+                className={cn(
+                  'rounded-2xl border border-border/70 p-3 transition-colors',
+                  isActive ? 'bg-secondary/70' : 'bg-background/40'
+                )}
+              >
                 <button
-                  key={session.id}
                   type="button"
-                  className={cn(
-                    'flex w-full flex-col gap-1 rounded-xl border border-border/70 px-3 py-3 text-left transition-colors',
-                    isActive ? 'bg-secondary text-secondary-foreground' : 'bg-background/40 hover:bg-accent hover:text-accent-foreground'
-                  )}
+                  className="w-full text-left"
                   onClick={() => {
                     void props.onOpenSession(session.id);
                   }}
                 >
-                  <span className="truncate text-sm font-medium" title={session.title}>{session.title}</span>
-                  <span className="truncate text-xs text-muted-foreground" title={session.modelName}>{session.modelName}</span>
-                  <span className="text-xs text-muted-foreground">{session.messageCount} messages</span>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium" title={session.title}>{session.title}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground" title={session.modelName}>{session.modelName}</p>
+                    </div>
+                    <Badge variant={sessionStatusVariant}>{sessionStatusLabel}</Badge>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>{session.messageCount} messages</span>
+                    <span>Updated {formatTimestamp(session.updatedAt)}</span>
+                  </div>
                 </button>
-              );
-            }) : (
-              <p className="text-sm text-muted-foreground">No sessions yet. Create one from a downloaded model to start chatting.</p>
-            )}
-          </div>
+
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-border/60 pt-3">
+                  <Button
+                    type="button"
+                    variant={session.modelLoaded ? 'secondary' : 'default'}
+                    className="h-8 px-3 text-xs"
+                    disabled={sessionAction === 'loading' || sessionAction === 'unloading' || props.deletingSessionId === session.id}
+                    onClick={() => {
+                      void (session.modelLoaded ? props.onUnloadSessionModel(session.id) : props.onLoadSessionModel(session.id));
+                    }}
+                  >
+                    {sessionAction === 'loading' || sessionAction === 'unloading' ? <LoaderCircle className="size-3.5 animate-spin" /> : session.modelLoaded ? <XCircle className="size-3.5" /> : <Play className="size-3.5" />}
+                    {sessionAction === 'loading' ? 'Loading model' : sessionAction === 'unloading' ? 'Unloading model' : session.modelLoaded ? 'Unload model' : 'Load model'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-8 px-3 text-xs text-muted-foreground"
+                    disabled={props.deletingSessionId === session.id || sessionAction === 'loading' || sessionAction === 'unloading'}
+                    onClick={() => {
+                      void props.onDeleteSession(session.id);
+                    }}
+                  >
+                    {props.deletingSessionId === session.id ? <LoaderCircle className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                    {props.deletingSessionId === session.id ? 'Deleting' : 'Delete'}
+                  </Button>
+                </div>
+              </div>
+            );
+          }) : (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-background/20 px-4 py-8 text-center">
+              <p className="text-sm text-muted-foreground">No sessions yet. Create one from a downloaded text model to get started.</p>
+            </div>
+          )}
         </CardContent>
       </Card>
+      </div>
 
       <Card className={cn(panelSurfaceClassName, 'flex min-h-0 flex-col')}>
         <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -577,6 +652,7 @@ function ChatPage(props: {
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{props.activeSession.session.modelAlias}</Badge>
               {activeModelStillAvailable ? <Badge variant="success">Model available</Badge> : <Badge variant="destructive">Model missing</Badge>}
+              {activeModelStillAvailable ? <Badge variant={activeSessionModelAction ? 'outline' : activeSessionModelLoaded ? 'success' : 'default'}>{activeSessionModelAction === 'loading' ? 'Loading model' : activeSessionModelAction === 'unloading' ? 'Unloading model' : activeSessionModelLoaded ? 'Model loaded' : 'Model not loaded'}</Badge> : null}
             </div>
           ) : null}
         </CardHeader>
@@ -630,17 +706,23 @@ function ChatPage(props: {
               }}
               placeholder={props.activeSession ? 'Message the current session' : 'Create a session first'}
               className="min-h-28 w-full resize-none rounded-lg border border-input bg-background px-3 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!props.activeSession || !activeModelStillAvailable || props.isSendingMessage}
+              disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage}
             />
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs text-muted-foreground">
                 {props.activeSession
                   ? activeModelStillAvailable
-                    ? 'Plain-text responses first. Session history is stored locally by the app.'
+                    ? activeSessionModelAction === 'loading'
+                      ? 'Model is loading for this session.'
+                      : activeSessionModelAction === 'unloading'
+                        ? 'Model is unloading for this session.'
+                        : activeSessionModelLoaded
+                          ? 'Plain-text responses first. Session history is stored locally by the app.'
+                          : 'Load this session model from the left panel before sending messages.'
                     : 'This session model is no longer downloaded. Re-download it from Catalog to continue.'
                   : 'Select a downloaded model and create a session to start.'}
               </p>
-              <Button type="button" disabled={!props.activeSession || !activeModelStillAvailable || !props.draftMessage.trim() || props.isSendingMessage} onClick={() => {
+              <Button type="button" disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || !props.draftMessage.trim() || props.isSendingMessage} onClick={() => {
                 void props.onSendMessage();
               }}>
                 {props.isSendingMessage ? <LoaderCircle className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
@@ -673,8 +755,9 @@ export function App() {
   const [isChatSessionLoading, setIsChatSessionLoading] = useState(true);
   const [isCreatingChatSession, setIsCreatingChatSession] = useState(false);
   const [isSendingChatMessage, setIsSendingChatMessage] = useState(false);
+  const [deletingChatSessionId, setDeletingChatSessionId] = useState<string | null>(null);
+  const [chatModelActionByModelId, setChatModelActionByModelId] = useState<Record<string, 'loading' | 'unloading'>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const loadedModelCount = catalogModels.filter((model) => model.loaded).length;
 
   useEffect(() => {
     let cancelled = false;
@@ -1040,6 +1123,24 @@ export function App() {
     }
   };
 
+  const refreshModelState = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getCatalog !== 'function' || typeof appApi.getRuntime !== 'function' || typeof appApi.getAppState !== 'function') {
+      return;
+    }
+
+    const [catalog, nextRuntime, nextState] = await Promise.all([
+      appApi.getCatalog(),
+      appApi.getRuntime(),
+      appApi.getAppState()
+    ]);
+
+    setCatalogModels(catalog.models);
+    setRuntime(nextRuntime);
+    setState(nextState);
+  };
+
   const openChatSession = async (sessionId: string): Promise<void> => {
     const appApi = globalThis.window?.foundryLocalApp;
 
@@ -1134,7 +1235,89 @@ export function App() {
     }
   };
 
+  const loadChatSessionModel = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+    const session = chatSessions.find((entry) => entry.id === sessionId);
+
+    if (!session || !appApi || typeof appApi.loadChatSessionModel !== 'function') {
+      return;
+    }
+
+    setChatModelActionByModelId((currentValue) => ({
+      ...currentValue,
+      [session.modelId]: 'loading'
+    }));
+    setChatError(null);
+
+    try {
+      const chatView = await appApi.loadChatSessionModel(sessionId);
+      setChatSessions(chatView.sessions);
+      await refreshModelState();
+    } finally {
+      setChatModelActionByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+        delete nextValue[session.modelId];
+        return nextValue;
+      });
+    }
+  };
+
+  const unloadChatSessionModel = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+    const session = chatSessions.find((entry) => entry.id === sessionId);
+
+    if (!session || !appApi || typeof appApi.unloadChatSessionModel !== 'function') {
+      return;
+    }
+
+    setChatModelActionByModelId((currentValue) => ({
+      ...currentValue,
+      [session.modelId]: 'unloading'
+    }));
+    setChatError(null);
+
+    try {
+      const chatView = await appApi.unloadChatSessionModel(sessionId);
+      setChatSessions(chatView.sessions);
+      await refreshModelState();
+    } finally {
+      setChatModelActionByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+        delete nextValue[session.modelId];
+        return nextValue;
+      });
+    }
+  };
+
+  const deleteChatSession = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.deleteChatSession !== 'function' || typeof appApi.getChatSession !== 'function') {
+      return;
+    }
+
+    setDeletingChatSessionId(sessionId);
+    setChatError(null);
+
+    try {
+      const chatView = await appApi.deleteChatSession(sessionId);
+      setChatSessions(chatView.sessions);
+
+      if (activeChatSession?.session.id === sessionId) {
+        if (chatView.activeSessionId) {
+          const nextSessionDetail = await appApi.getChatSession(chatView.activeSessionId);
+          setActiveChatSession(nextSessionDetail);
+        } else {
+          setActiveChatSession(null);
+        }
+      }
+    } finally {
+      setDeletingChatSessionId(null);
+    }
+  };
+
   const downloadedModels = useMemo(() => catalogModels.filter((model) => model.downloaded), [catalogModels]);
+  const chatEligibleModels = useMemo(() => downloadedModels.filter((model) => model.supportsTextChat), [downloadedModels]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.15),_transparent_45%),linear-gradient(180deg,_hsl(var(--background)),_hsl(var(--muted)/0.45))] text-foreground transition-colors">
@@ -1207,9 +1390,9 @@ export function App() {
             ) : null}
             <Routes>
               <Route path="/" element={<CatalogPage busyModelId={busyModelId} downloadProgressByModelId={downloadProgressByModelId} isLoading={isCatalogLoading} isRefreshing={isRefreshingCatalog} models={catalogModels} onMutateModel={mutateCatalogModel} onRefresh={refreshCatalog} />} />
-              <Route path="/chat" element={<ChatPage activeSession={activeChatSession} availableModels={downloadedModels} chatError={chatError} draftMessage={chatDraftMessage} isCreatingSession={isCreatingChatSession} isLoadingSession={isChatSessionLoading} isSendingMessage={isSendingChatMessage} onCreateSession={createChatSession} onDraftMessageChange={setChatDraftMessage} onOpenSession={openChatSession} onSendMessage={sendChatMessage} sessions={chatSessions} />} />
+              <Route path="/chat" element={<ChatPage activeSession={activeChatSession} availableModels={chatEligibleModels} chatError={chatError} deletingSessionId={deletingChatSessionId} draftMessage={chatDraftMessage} isCreatingSession={isCreatingChatSession} isLoadingSession={isChatSessionLoading} isSendingMessage={isSendingChatMessage} onCreateSession={createChatSession} onDeleteSession={deleteChatSession} onDraftMessageChange={setChatDraftMessage} onLoadSessionModel={loadChatSessionModel} onOpenSession={openChatSession} onSendMessage={sendChatMessage} onUnloadSessionModel={unloadChatSessionModel} modelActionByModelId={chatModelActionByModelId} sessions={chatSessions} />} />
               <Route path="/runtime" element={<RuntimePage epProgressByName={epProgressByName} isRegisteringEps={isRegisteringEps} isRefreshing={isRuntimeRefreshing} isTogglingWebService={isWebServiceToggling} onRefresh={refreshRuntime} onRegisterEp={registerExecutionProviders} onToggleWebService={toggleWebService} runtime={runtime} />} />
-              <Route path="/settings" element={<ThemeSettingCard />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           </div>
         </main>
@@ -1220,7 +1403,7 @@ export function App() {
           <StatusPill label="Bootstrap" value={state.bootstrapStage} tone={state.bootstrapStage} />
           <StatusPill label="SDK" value={state.sdkStage} tone={state.sdkStage} />
           <StatusPill label="Web service" value={state.webServiceStage} tone={state.webServiceStage} />
-          <StatusPill label="Loaded models" value={String(loadedModelCount)} tone={loadedModelCount > 0 ? 'ready' : 'stopped'} />
+          <StatusPill label="Loaded models" value={String(state.loadedModelCount)} tone={state.loadedModelCount > 0 ? 'ready' : 'stopped'} />
         </StatusBarContent>
       </StatusBar>
     </div>

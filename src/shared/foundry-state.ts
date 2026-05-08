@@ -40,6 +40,7 @@ export interface FoundryCatalogModelView {
   outputModalities: string[];
   downloaded: boolean;
   loaded: boolean;
+  supportsTextChat: boolean;
   supportsToolCalling: boolean;
 }
 
@@ -97,6 +98,7 @@ export interface FoundryChatSessionView {
   createdAt: string;
   updatedAt: string;
   messageCount: number;
+  modelLoaded: boolean;
 }
 
 export interface FoundryChatSessionDetailView {
@@ -149,6 +151,9 @@ export interface FoundryAppApi {
   getChatSessions: () => Promise<FoundryChatView>;
   getChatSession: (sessionId: string) => Promise<FoundryChatSessionDetailView>;
   createChatSession: (modelId: string) => Promise<FoundryChatSessionDetailView>;
+  deleteChatSession: (sessionId: string) => Promise<FoundryChatView>;
+  loadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
+  unloadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   sendChatMessage: (sessionId: string, message: string) => Promise<FoundryChatSendResultView>;
   onCatalogDownloadProgress: (listener: (event: FoundryDownloadProgressEvent) => void) => () => void;
   onEpDownloadProgress: (listener: (event: FoundryEpDownloadProgressEvent) => void) => () => void;

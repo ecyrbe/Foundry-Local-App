@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { FoundryLocalManager, getOutputText, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel } from 'foundry-local-sdk';
+import { FoundryLocalManager, getOutputText, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel, type ResponseInputItem } from 'foundry-local-sdk';
 import {
   foundryLocalBootstrapConfig,
   type FoundryCatalogAction,
@@ -36,6 +36,7 @@ interface StoredChatSession {
   modelName: string;
   modelAlias: string;
   lastResponseId: string | null;
+  needsContextHydration: boolean;
   createdAt: string;
   updatedAt: string;
   messages: FoundryChatMessageView[];
@@ -223,7 +224,7 @@ export class FoundryAppService {
     const chatSessionsState = await this.readChatSessionsState();
 
     return {
-      sessions: chatSessionsState.sessions.map(toChatSessionView),
+      sessions: await this.toChatSessionViews(chatSessionsState.sessions),
       activeSessionId: chatSessionsState.activeSessionId
     };
   }
@@ -249,6 +250,12 @@ export class FoundryAppService {
       throw new Error('Only downloaded models can be used for chat sessions.');
     }
 
+    if (!supportsTextChat(model)) {
+      throw new Error('Only text chat models can be used for chat sessions.');
+    }
+
+    const chatSessionsState = await this.readChatSessionsState();
+
     const now = new Date().toISOString();
     const chatSession: StoredChatSession = {
       id: randomUUID(),
@@ -257,12 +264,12 @@ export class FoundryAppService {
       modelName: model.info.displayName ?? model.info.name,
       modelAlias: model.alias,
       lastResponseId: null,
+      needsContextHydration: false,
       createdAt: now,
       updatedAt: now,
       messages: []
     };
 
-    const chatSessionsState = await this.readChatSessionsState();
     this.chatSessionsState = {
       activeSessionId: chatSession.id,
       sessions: [chatSession, ...chatSessionsState.sessions]
@@ -271,6 +278,69 @@ export class FoundryAppService {
     await this.persistChatSessionsState();
 
     return toChatSessionDetailView(chatSession);
+  }
+
+  async deleteChatSession(sessionId: string): Promise<FoundryChatView> {
+    await this.initialize();
+
+    const chatSessionsState = await this.readChatSessionsState();
+    const nextSessions = chatSessionsState.sessions.filter((session) => session.id !== sessionId);
+
+    this.chatSessionsState = {
+      activeSessionId: chatSessionsState.activeSessionId === sessionId ? nextSessions[0]?.id ?? null : chatSessionsState.activeSessionId,
+      sessions: nextSessions
+    };
+
+    await this.persistChatSessionsState();
+
+    return {
+      sessions: await this.toChatSessionViews(nextSessions),
+      activeSessionId: this.chatSessionsState.activeSessionId
+    };
+  }
+
+  async loadChatSessionModel(sessionId: string): Promise<FoundryChatView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const chatSession = await this.requireStoredChatSession(sessionId);
+    const model = await this.manager.catalog.getModelVariant(chatSession.modelId);
+
+    if (!model.isCached) {
+      throw new Error(`The model for this session is no longer downloaded: ${chatSession.modelName}.`);
+    }
+
+    if (!(await model.isLoaded())) {
+      await model.load();
+    }
+
+    await this.getAppState();
+
+    return this.getChatSessions();
+  }
+
+  async unloadChatSessionModel(sessionId: string): Promise<FoundryChatView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const chatSession = await this.requireStoredChatSession(sessionId);
+    const model = await this.manager.catalog.getModelVariant(chatSession.modelId);
+
+    if (await model.isLoaded()) {
+      await model.unload();
+    }
+
+    await this.markSessionsForModelAsNeedingHydration(chatSession.modelId);
+
+    await this.getAppState();
+
+    return this.getChatSessions();
   }
 
   async sendChatMessage(sessionId: string, message: string): Promise<FoundryChatSendResultView> {
@@ -301,7 +371,7 @@ export class FoundryAppService {
     }
 
     if (!(await model.isLoaded())) {
-      await model.load();
+      throw new Error(`Load ${chatSession.modelName} before sending messages in this session.`);
     }
 
     if (!this.manager.isWebServiceRunning) {
@@ -340,7 +410,18 @@ export class FoundryAppService {
         message: { ...assistantMessage }
       });
 
-      await responsesClient.createStreaming(trimmedMessage, (event) => {
+      const shouldReplayTranscript = chatSession.needsContextHydration || chatSession.lastResponseId === null;
+      const requestInput: string | ResponseInputItem[] = shouldReplayTranscript
+        ? toResponseInputItems(chatSession.messages)
+        : trimmedMessage;
+      const requestOptions = shouldReplayTranscript
+        ? { store: true }
+        : {
+          previous_response_id: chatSession.lastResponseId ?? undefined,
+          store: true
+        };
+
+      await responsesClient.createStreaming(requestInput, (event) => {
         if (event.type === 'response.output_text.delta') {
           assistantMessage.content += event.delta;
           this.emitChatStreamEvent({
@@ -372,16 +453,14 @@ export class FoundryAppService {
         if (event.type === 'error') {
           throw new Error(event.message ?? 'Chat request failed.');
         }
-      }, {
-        previous_response_id: chatSession.lastResponseId ?? undefined,
-        store: true
-      });
+      }, requestOptions);
 
       if (!assistantMessage.content) {
         assistantMessage.content = 'No response text returned.';
       }
 
       chatSession.lastResponseId = responseId;
+      chatSession.needsContextHydration = false;
       chatSession.updatedAt = new Date().toISOString();
 
       if (chatSession.messages.length === 2) {
@@ -438,11 +517,15 @@ export class FoundryAppService {
       this.emitDownloadProgress({ modelId, progress: 100 });
     } else if (action === 'remove') {
       model.removeFromCache();
+      await this.markSessionsForModelAsNeedingHydration(model.id);
     } else if (action === 'load') {
       await model.load();
     } else {
       await model.unload();
+      await this.markSessionsForModelAsNeedingHydration(model.id);
     }
+
+    await this.getAppState();
 
     return this.refreshCatalog();
   }
@@ -600,7 +683,12 @@ export class FoundryAppService {
 
       this.chatSessionsState = {
         activeSessionId: typeof parsedState.activeSessionId === 'string' ? parsedState.activeSessionId : null,
-        sessions: Array.isArray(parsedState.sessions) ? parsedState.sessions.filter(isStoredChatSession) : []
+        sessions: Array.isArray(parsedState.sessions)
+          ? parsedState.sessions.filter(isStoredChatSession).map((session) => ({
+            ...session,
+            needsContextHydration: session.needsContextHydration ?? (session.lastResponseId !== null)
+          }))
+          : []
       };
     } catch {
       this.chatSessionsState = {
@@ -639,6 +727,37 @@ export class FoundryAppService {
     return chatSession;
   }
 
+  private async requireStoredChatSession(sessionId: string): Promise<StoredChatSession> {
+    const chatSessionsState = await this.readChatSessionsState();
+    const chatSession = chatSessionsState.sessions.find((session) => session.id === sessionId);
+
+    if (!chatSession) {
+      throw new Error('Chat session not found.');
+    }
+
+    return chatSession;
+  }
+
+  private async markSessionsForModelAsNeedingHydration(modelId: string): Promise<void> {
+    const chatSessionsState = await this.readChatSessionsState();
+    let didChange = false;
+
+    for (const session of chatSessionsState.sessions) {
+      if (session.modelId !== modelId) {
+        continue;
+      }
+
+      if (!session.needsContextHydration) {
+        session.needsContextHydration = true;
+        didChange = true;
+      }
+    }
+
+    if (didChange) {
+      await this.persistChatSessionsState();
+    }
+  }
+
   private recordFailure(error: unknown, bootstrapFailed: boolean): void {
     this.state = {
       ...this.state,
@@ -675,8 +794,27 @@ export class FoundryAppService {
       outputModalities: splitModalities(model.outputModalities),
       downloaded: model.isCached,
       loaded: await model.isLoaded(),
+      supportsTextChat: supportsTextChat(model),
       supportsToolCalling: model.supportsToolCalling ?? false
     })));
+  }
+
+  private async toChatSessionViews(sessions: StoredChatSession[]): Promise<FoundryChatSessionView[]> {
+    return Promise.all(sessions.map(async (chatSession) => toChatSessionView(chatSession, await this.isSessionModelLoaded(chatSession.modelId))));
+  }
+
+  private async isSessionModelLoaded(modelId: string): Promise<boolean> {
+    if (!this.manager) {
+      return false;
+    }
+
+    try {
+      const model = await this.manager.catalog.getModelVariant(modelId);
+
+      return await model.isLoaded();
+    } catch {
+      return false;
+    }
   }
 
   private emitDownloadProgress(event: FoundryDownloadProgressEvent): void {
@@ -721,7 +859,7 @@ function toExecutionProviderView(ep: EpInfo) {
   };
 }
 
-function toChatSessionView(chatSession: StoredChatSession): FoundryChatSessionView {
+function toChatSessionView(chatSession: StoredChatSession, modelLoaded: boolean): FoundryChatSessionView {
   return {
     id: chatSession.id,
     title: chatSession.title,
@@ -731,13 +869,14 @@ function toChatSessionView(chatSession: StoredChatSession): FoundryChatSessionVi
     lastResponseId: chatSession.lastResponseId,
     createdAt: chatSession.createdAt,
     updatedAt: chatSession.updatedAt,
-    messageCount: chatSession.messages.length
+    messageCount: chatSession.messages.length,
+    modelLoaded
   };
 }
 
 function toChatSessionDetailView(chatSession: StoredChatSession): FoundryChatSessionDetailView {
   return {
-    session: toChatSessionView(chatSession),
+    session: toChatSessionView(chatSession, false),
     messages: chatSession.messages.map((message) => ({ ...message }))
   };
 }
@@ -750,6 +889,21 @@ function buildChatSessionTitle(value: string): string {
   }
 
   return normalizedValue.length > 48 ? `${normalizedValue.slice(0, 48).trimEnd()}...` : normalizedValue;
+}
+
+function toResponseInputItems(messages: FoundryChatMessageView[]): ResponseInputItem[] {
+  return messages
+    .filter((message) => !message.failed && message.content.trim().length > 0)
+    .map((message) => ({
+    type: 'message',
+    role: message.role,
+    content: [
+      {
+        type: 'input_text',
+        text: message.content
+      }
+    ]
+    }));
 }
 
 function isStoredChatSession(value: unknown): value is StoredChatSession {
@@ -765,6 +919,7 @@ function isStoredChatSession(value: unknown): value is StoredChatSession {
     && typeof candidate.modelName === 'string'
     && typeof candidate.modelAlias === 'string'
     && (typeof candidate.lastResponseId === 'string' || candidate.lastResponseId === null)
+    && (candidate.needsContextHydration === undefined || typeof candidate.needsContextHydration === 'boolean')
     && typeof candidate.createdAt === 'string'
     && typeof candidate.updatedAt === 'string'
     && Array.isArray(candidate.messages)
@@ -800,6 +955,26 @@ function splitModalities(value: string | null): string[] {
   }
 
   return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function supportsTextChat(model: IModel): boolean {
+  const task = (model.info.task ?? '').toLowerCase();
+  const modelType = (model.info.modelType ?? '').toLowerCase();
+  const capabilities = (model.capabilities ?? '').toLowerCase();
+  const inputModalities = splitModalities(model.inputModalities).map((value) => value.toLowerCase());
+  const outputModalities = splitModalities(model.outputModalities).map((value) => value.toLowerCase());
+
+  const supportsTextInput = inputModalities.length === 0 || inputModalities.includes('text');
+  const supportsTextOutput = outputModalities.length === 0 || outputModalities.includes('text');
+  const looksLikeChatModel = task.includes('chat')
+    || task.includes('text')
+    || modelType.includes('chat')
+    || modelType.includes('text')
+    || modelType.includes('language')
+    || capabilities.includes('chat')
+    || capabilities.includes('text');
+
+  return supportsTextInput && supportsTextOutput && looksLikeChatModel;
 }
 
 export const foundryAppService = new FoundryAppService();

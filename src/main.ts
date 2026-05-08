@@ -53,6 +53,9 @@ app.whenReady().then(() => {
   ipcMain.handle('foundry-local-app:get-chat-sessions', () => foundryAppService.getChatSessions());
   ipcMain.handle('foundry-local-app:get-chat-session', (_event, sessionId: string) => foundryAppService.getChatSession(sessionId));
   ipcMain.handle('foundry-local-app:create-chat-session', (_event, modelId: string) => foundryAppService.createChatSession(modelId));
+  ipcMain.handle('foundry-local-app:delete-chat-session', (_event, sessionId: string) => foundryAppService.deleteChatSession(sessionId));
+  ipcMain.handle('foundry-local-app:load-chat-session-model', (_event, sessionId: string) => foundryAppService.loadChatSessionModel(sessionId));
+  ipcMain.handle('foundry-local-app:unload-chat-session-model', (_event, sessionId: string) => foundryAppService.unloadChatSessionModel(sessionId));
   ipcMain.handle('foundry-local-app:send-chat-message', (_event, sessionId: string, message: string) => foundryAppService.sendChatMessage(sessionId, message));
 
   createWindow();
@@ -82,6 +85,9 @@ app.on('will-quit', () => {
   ipcMain.removeHandler('foundry-local-app:get-chat-sessions');
   ipcMain.removeHandler('foundry-local-app:get-chat-session');
   ipcMain.removeHandler('foundry-local-app:create-chat-session');
+  ipcMain.removeHandler('foundry-local-app:delete-chat-session');
+  ipcMain.removeHandler('foundry-local-app:load-chat-session-model');
+  ipcMain.removeHandler('foundry-local-app:unload-chat-session-model');
   ipcMain.removeHandler('foundry-local-app:send-chat-message');
   unsubscribeFromDownloadProgress?.();
   unsubscribeFromEpDownloadProgress?.();

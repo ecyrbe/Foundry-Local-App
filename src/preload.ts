@@ -13,6 +13,9 @@ const foundryLocalAppApi: FoundryAppApi = {
   getChatSessions: () => ipcRenderer.invoke('foundry-local-app:get-chat-sessions'),
   getChatSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:get-chat-session', sessionId),
   createChatSession: (modelId) => ipcRenderer.invoke('foundry-local-app:create-chat-session', modelId),
+  deleteChatSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:delete-chat-session', sessionId),
+  loadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:load-chat-session-model', sessionId),
+  unloadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:unload-chat-session-model', sessionId),
   sendChatMessage: (sessionId, message) => ipcRenderer.invoke('foundry-local-app:send-chat-message', sessionId, message),
   onCatalogDownloadProgress: (listener) => {
     const wrappedListener = (_event: unknown, progressEvent: Parameters<typeof listener>[0]) => {
