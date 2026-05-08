@@ -2,9 +2,11 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { foundryAppService } from './main/foundry-app-service.js';
+import type { FoundryDownloadProgressEvent } from './shared/foundry-state.js';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
+let unsubscribeFromDownloadProgress: (() => void) | null = null;
 
 const createWindow = (): void => {
   const window = new BrowserWindow({
@@ -22,6 +24,12 @@ const createWindow = (): void => {
 
 app.whenReady().then(() => {
   void foundryAppService.initialize();
+  unsubscribeFromDownloadProgress = foundryAppService.subscribeToDownloadProgress((progressEvent: FoundryDownloadProgressEvent) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('foundry-local-app:catalog-download-progress', progressEvent);
+    }
+  });
+
   ipcMain.handle('foundry-local-app:get-app-state', () => foundryAppService.getAppState());
   ipcMain.handle('foundry-local-app:get-catalog', () => foundryAppService.getCatalog());
   ipcMain.handle('foundry-local-app:refresh-catalog', () => foundryAppService.refreshCatalog());
@@ -47,4 +55,5 @@ app.on('will-quit', () => {
   ipcMain.removeHandler('foundry-local-app:get-catalog');
   ipcMain.removeHandler('foundry-local-app:refresh-catalog');
   ipcMain.removeHandler('foundry-local-app:mutate-catalog-model');
+  unsubscribeFromDownloadProgress?.();
 });

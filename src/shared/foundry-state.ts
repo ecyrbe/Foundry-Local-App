@@ -1,4 +1,4 @@
-import { FoundryLocalConfig } from "foundry-local-sdk";
+import type { FoundryLocalConfig } from 'foundry-local-sdk';
 
 export const FOUNDRY_LOCAL_APP_NAME = 'foundry';
 
@@ -49,11 +49,17 @@ export interface FoundryCatalogView {
 
 export type FoundryCatalogAction = 'download' | 'remove' | 'load' | 'unload';
 
+export interface FoundryDownloadProgressEvent {
+  modelId: string;
+  progress: number;
+}
+
 export interface FoundryAppApi {
   getAppState: () => Promise<FoundryAppState>;
   getCatalog: () => Promise<FoundryCatalogView>;
   refreshCatalog: () => Promise<FoundryCatalogView>;
   mutateCatalogModel: (modelId: string, action: FoundryCatalogAction) => Promise<FoundryCatalogView>;
+  onCatalogDownloadProgress: (listener: (event: FoundryDownloadProgressEvent) => void) => () => void;
 }
 
 declare global {

@@ -6,6 +6,7 @@ import {
   type FoundryCatalogModelView,
   type FoundryCatalogView,
   type FoundryAppState,
+  type FoundryDownloadProgressEvent,
   type FoundryErrorView
 } from '../shared/foundry-state.js';
 
@@ -29,6 +30,8 @@ export class FoundryAppService {
   private manager: FoundryLocalManager | null = null;
 
   private startupConfig: FoundryLocalConfig | null = null;
+
+  private readonly downloadProgressListeners = new Set<(event: FoundryDownloadProgressEvent) => void>();
 
   private state: FoundryAppState = {
     bootstrapStage: 'starting',
@@ -110,7 +113,11 @@ export class FoundryAppService {
     const model = await this.manager.catalog.getModelVariant(modelId);
 
     if (action === 'download') {
-      await model.download();
+      this.emitDownloadProgress({ modelId, progress: 0 });
+      await model.download((progress) => {
+        this.emitDownloadProgress({ modelId, progress });
+      });
+      this.emitDownloadProgress({ modelId, progress: 100 });
     } else if (action === 'remove') {
       model.removeFromCache();
     } else if (action === 'load') {
@@ -120,6 +127,14 @@ export class FoundryAppService {
     }
 
     return this.refreshCatalog();
+  }
+
+  subscribeToDownloadProgress(listener: (event: FoundryDownloadProgressEvent) => void): () => void {
+    this.downloadProgressListeners.add(listener);
+
+    return () => {
+      this.downloadProgressListeners.delete(listener);
+    };
   }
 
   private async initializeInternal(): Promise<void> {
@@ -198,6 +213,12 @@ export class FoundryAppService {
       loaded: await model.isLoaded(),
       supportsToolCalling: model.supportsToolCalling ?? false
     })));
+  }
+
+  private emitDownloadProgress(event: FoundryDownloadProgressEvent): void {
+    for (const listener of this.downloadProgressListeners) {
+      listener(event);
+    }
   }
 }
 

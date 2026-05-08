@@ -10,7 +10,7 @@ import { Sidebar, SidebarContent, SidebarHeader, SidebarNav } from '@/components
 import { StatusBar, StatusBarContent } from '@/components/ui/status-bar';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import type { FoundryAppState, FoundryCatalogAction, FoundryCatalogModelView } from '../shared/foundry-state.js';
+import type { FoundryAppState, FoundryCatalogAction, FoundryCatalogModelView, FoundryDownloadProgressEvent } from '../shared/foundry-state.js';
 
 const pages = [
   { to: '/', label: 'Catalog', icon: LibraryBig, description: 'Browse available Foundry Local models.' },
@@ -64,6 +64,7 @@ function PlaceholderPage(props: { title: string; description: string }) {
 
 function CatalogPage(props: {
   busyModelId: string | null;
+  downloadProgressByModelId: Record<string, number>;
   isRefreshing: boolean;
   isLoading: boolean;
   models: FoundryCatalogModelView[];
@@ -90,6 +91,7 @@ function CatalogPage(props: {
   }, [downloadedOnly, props.models, searchValue]);
 
   const downloadedCount = props.models.filter((model) => model.downloaded).length;
+  const downloadedOnlyStatusText = downloadedOnly ? `${visibleModels.length} downloaded model${visibleModels.length === 1 ? '' : 's'} shown` : null;
 
   return (
     <div className="space-y-4">
@@ -105,6 +107,7 @@ function CatalogPage(props: {
             <Badge variant="outline">Total: {props.models.length}</Badge>
             <Badge variant="outline">Downloaded: {downloadedCount}</Badge>
             <Badge variant="outline">Showing: {visibleModels.length}</Badge>
+            {downloadedOnlyStatusText ? <Badge variant="outline">{downloadedOnlyStatusText}</Badge> : null}
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -146,21 +149,25 @@ function CatalogPage(props: {
       <div className="grid gap-4 xl:grid-cols-2">
         {visibleModels.map((model) => {
           const isBusy = props.busyModelId === model.id;
+          const downloadProgress = props.downloadProgressByModelId[model.id];
           const primaryActionLabel = model.downloaded ? 'Remove' : 'Download';
 
           return (
             <Card key={model.id} className={panelSurfaceClassName}>
               <CardHeader className="gap-3">
-                <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+                <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
                   <div className="min-w-0">
-                    <CardTitle className="text-xl">{model.name}</CardTitle>
-                    <CardDescription className="mt-1 break-words">{model.alias} · v{model.version}</CardDescription>
+                    <CardTitle className="truncate text-xl" title={model.name}>{model.name}</CardTitle>
+                    <CardDescription className="mt-1 truncate" title={`${model.alias} · v${model.version}`}>
+                      {model.alias} · v{model.version}
+                    </CardDescription>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2 self-start">
                     <Badge variant="outline">{model.modelType}</Badge>
                     <Badge variant="outline">{model.task}</Badge>
                     {model.downloaded ? <Badge variant="success">Downloaded</Badge> : <Badge variant="default">Available</Badge>}
                     {model.loaded ? <Badge variant="success">Loaded</Badge> : null}
+                    {typeof downloadProgress === 'number' ? <Badge variant="outline">{Math.round(downloadProgress)}%</Badge> : null}
                     {model.supportsToolCalling ? <Badge variant="outline">Tools</Badge> : null}
                   </div>
                 </div>
@@ -195,7 +202,7 @@ function CatalogPage(props: {
                     }}
                   >
                     {isBusy ? <LoaderCircle className="size-4 animate-spin" /> : model.downloaded ? <Trash2 className="size-4" /> : <Download className="size-4" />}
-                    {primaryActionLabel}
+                    {typeof downloadProgress === 'number' && !model.downloaded ? `Downloading ${Math.round(downloadProgress)}%` : primaryActionLabel}
                   </Button>
 
                   <Button
@@ -308,6 +315,7 @@ export function App() {
   const [state, setState] = useState<FoundryAppState>(loadingState);
   const [catalogModels, setCatalogModels] = useState<FoundryCatalogModelView[]>([]);
   const [busyModelId, setBusyModelId] = useState<string | null>(null);
+  const [downloadProgressByModelId, setDownloadProgressByModelId] = useState<Record<string, number>>({});
   const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -356,6 +364,21 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.onCatalogDownloadProgress !== 'function') {
+      return () => undefined;
+    }
+
+    return appApi.onCatalogDownloadProgress((progressEvent: FoundryDownloadProgressEvent) => {
+      setDownloadProgressByModelId((currentValue) => ({
+        ...currentValue,
+        [progressEvent.modelId]: progressEvent.progress
+      }));
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const appApi = globalThis.window?.foundryLocalApp;
@@ -395,6 +418,17 @@ export function App() {
     try {
       const catalog = await appApi.refreshCatalog();
       setCatalogModels(catalog.models);
+      setDownloadProgressByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+
+        for (const model of catalog.models) {
+          if (model.downloaded) {
+            delete nextValue[model.id];
+          }
+        }
+
+        return nextValue;
+      });
     } finally {
       setIsRefreshingCatalog(false);
     }
@@ -412,6 +446,13 @@ export function App() {
     try {
       const catalog = await appApi.mutateCatalogModel(modelId, action);
       setCatalogModels(catalog.models);
+      setDownloadProgressByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+
+        delete nextValue[modelId];
+
+        return nextValue;
+      });
       const nextState = await appApi.getAppState();
       setState(nextState);
     } finally {
@@ -489,7 +530,7 @@ export function App() {
               </Card>
             ) : null}
             <Routes>
-              <Route path="/" element={<CatalogPage busyModelId={busyModelId} isLoading={isCatalogLoading} isRefreshing={isRefreshingCatalog} models={catalogModels} onMutateModel={mutateCatalogModel} onRefresh={refreshCatalog} />} />
+              <Route path="/" element={<CatalogPage busyModelId={busyModelId} downloadProgressByModelId={downloadProgressByModelId} isLoading={isCatalogLoading} isRefreshing={isRefreshingCatalog} models={catalogModels} onMutateModel={mutateCatalogModel} onRefresh={refreshCatalog} />} />
               <Route path="/chat" element={<PlaceholderPage title="Chat" description="This page will use the Responses API first and only allow selecting locally downloaded models." />} />
               <Route path="/runtime" element={<PlaceholderPage title="Runtime" description="This page will expose web service controls and execution provider management." />} />
               <Route path="/settings" element={<ThemeSettingCard />} />
