@@ -1,0 +1,47 @@
+{
+  "name": "foundry-local-app",
+  "version": "1.0.0",
+  "description": "Electron shell for exposing the Foundry Local SDK.",
+  "main": "dist/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build",
+    "build:main": "tsc",
+    "build:renderer": "vite build",
+    "dev:renderer": "vite",
+    "start": "npm run build && electron ."
+  },
+  "keywords": [
+    "electron",
+    "typescript",
+    "foundry"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^35.1.5",
+    "lucide-react": "^1.14.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.11"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "foundry-local-sdk": "^1.1.0",
+    "foundry-local-sdk-winml": "^1.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.0"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "react",
+      "react-dom",
+      "node"
+    ],
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "../shared/**/*.ts"
+  ]
+}
