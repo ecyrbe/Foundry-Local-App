@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { Check, Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Monitor, Moon, RefreshCw, Search, Settings, Sun, Trash2 } from 'lucide-react';
+import { Check, Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Monitor, Moon, Play, RefreshCw, Search, Settings, Square, Sun, Trash2 } from 'lucide-react';
 import { useTheme, type ThemePreference } from '@/components/theme-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -10,7 +10,14 @@ import { Sidebar, SidebarContent, SidebarHeader, SidebarNav } from '@/components
 import { StatusBar, StatusBarContent } from '@/components/ui/status-bar';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import type { FoundryAppState, FoundryCatalogAction, FoundryCatalogModelView, FoundryDownloadProgressEvent } from '../shared/foundry-state.js';
+import type {
+  FoundryAppState,
+  FoundryCatalogAction,
+  FoundryCatalogModelView,
+  FoundryDownloadProgressEvent,
+  FoundryEpDownloadProgressEvent,
+  FoundryRuntimeView
+} from '../shared/foundry-state.js';
 
 const pages = [
   { to: '/', label: 'Catalog', icon: LibraryBig, description: 'Browse available Foundry Local models.' },
@@ -311,13 +318,146 @@ function ThemeSettingCard() {
   );
 }
 
+function RuntimePage(props: {
+  epProgressByName: Record<string, number>;
+  isRegisteringEps: boolean;
+  isRefreshing: boolean;
+  isTogglingWebService: boolean;
+  onRefresh: () => Promise<void>;
+  onRegisterEp: (epName?: string) => Promise<void>;
+  onToggleWebService: () => Promise<void>;
+  runtime: FoundryRuntimeView;
+}) {
+  const unregisteredProviders = props.runtime.executionProviders.filter((provider) => !provider.isRegistered);
+
+  return (
+    <div className="space-y-4">
+      <Card className={panelSurfaceClassName}>
+        <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <CardTitle>Runtime</CardTitle>
+            <CardDescription className="mt-2 max-w-3xl text-pretty break-words">
+              Inspect the embedded web service and install execution providers for local acceleration.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">Web service: {props.runtime.webServiceRunning ? 'Running' : 'Stopped'}</Badge>
+            <Badge variant="outline">EPs: {props.runtime.executionProviders.length}</Badge>
+            <Badge variant="outline">Registered: {props.runtime.executionProviders.filter((provider) => provider.isRegistered).length}</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button type="button" variant={props.runtime.webServiceRunning ? 'secondary' : 'default'} disabled={props.isTogglingWebService} onClick={() => {
+            void props.onToggleWebService();
+          }}>
+            {props.isTogglingWebService ? <LoaderCircle className="size-4 animate-spin" /> : props.runtime.webServiceRunning ? <Square className="size-4" /> : <Play className="size-4" />}
+            {props.runtime.webServiceRunning ? 'Stop web service' : 'Start web service'}
+          </Button>
+          <Button type="button" variant="ghost" disabled={props.isRefreshing} onClick={() => {
+            void props.onRefresh();
+          }}>
+            <RefreshCw className={cn('size-4', props.isRefreshing ? 'animate-spin' : '')} />
+            Refresh runtime
+          </Button>
+          <Button type="button" variant="ghost" disabled={props.isRegisteringEps || unregisteredProviders.length === 0} onClick={() => {
+            void props.onRegisterEp();
+          }}>
+            {props.isRegisteringEps ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
+            Register available EPs
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className={panelSurfaceClassName}>
+        <CardHeader>
+          <CardTitle>Web Service</CardTitle>
+          <CardDescription>
+            The embedded local web service is required for HTTP-backed SDK flows like `ResponsesClient`.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={props.runtime.webServiceRunning ? 'success' : 'default'}>
+              {props.runtime.webServiceRunning ? 'Running' : 'Stopped'}
+            </Badge>
+          </div>
+          {props.runtime.webServiceUrls.length > 0 ? (
+            <div className="grid gap-3">
+              {props.runtime.webServiceUrls.map((url) => (
+                <div key={url} className="rounded-lg border border-border/70 bg-background/40 px-3 py-2 text-sm text-foreground/90">
+                  {url}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No bound URLs yet. Start the web service to allocate a local endpoint.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className={panelSurfaceClassName}>
+        <CardHeader>
+          <CardTitle>Execution Providers</CardTitle>
+          <CardDescription>
+            Discover hardware-specific execution providers and register them when local acceleration is available.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {props.runtime.executionProviders.length > 0 ? (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {props.runtime.executionProviders.map((provider) => {
+                const progress = props.epProgressByName[provider.name];
+
+                return (
+                  <div key={provider.name} className="rounded-xl border border-border/70 bg-background/40 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground" title={provider.name}>{provider.name}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {provider.isRegistered ? 'Registered and ready for runtime selection.' : 'Detected on this machine but not registered yet.'}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                        <Badge variant={provider.isRegistered ? 'success' : 'outline'}>
+                          {provider.isRegistered ? 'Registered' : 'Available'}
+                        </Badge>
+                        {typeof progress === 'number' ? <Badge variant="outline">{Math.round(progress)}%</Badge> : null}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button type="button" variant={provider.isRegistered ? 'secondary' : 'default'} disabled={provider.isRegistered || props.isRegisteringEps} onClick={() => {
+                        void props.onRegisterEp(provider.name);
+                      }}>
+                        {props.isRegisteringEps && typeof progress === 'number' ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
+                        {typeof progress === 'number' && !provider.isRegistered ? `Registering ${Math.round(progress)}%` : provider.isRegistered ? 'Registered' : 'Register EP'}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No execution providers were discovered for the current environment.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export function App() {
   const [state, setState] = useState<FoundryAppState>(loadingState);
   const [catalogModels, setCatalogModels] = useState<FoundryCatalogModelView[]>([]);
   const [busyModelId, setBusyModelId] = useState<string | null>(null);
   const [downloadProgressByModelId, setDownloadProgressByModelId] = useState<Record<string, number>>({});
+  const [runtime, setRuntime] = useState<FoundryRuntimeView>({ webServiceRunning: false, webServiceUrls: [], executionProviders: [] });
+  const [epProgressByName, setEpProgressByName] = useState<Record<string, number>>({});
   const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
+  const [isRuntimeRefreshing, setIsRuntimeRefreshing] = useState(true);
+  const [isWebServiceToggling, setIsWebServiceToggling] = useState(false);
+  const [isRegisteringEps, setIsRegisteringEps] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const loadedModelCount = catalogModels.filter((model) => model.loaded).length;
 
@@ -364,6 +504,36 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getRuntime !== 'function') {
+      setIsRuntimeRefreshing(false);
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void appApi.getRuntime().then((nextRuntime) => {
+      if (!cancelled) {
+        setRuntime(nextRuntime);
+        setIsRuntimeRefreshing(false);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setRuntime({ webServiceRunning: false, webServiceUrls: [], executionProviders: [] });
+        setIsRuntimeRefreshing(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     const appApi = globalThis.window?.foundryLocalApp;
 
     if (!appApi || typeof appApi.onCatalogDownloadProgress !== 'function') {
@@ -374,6 +544,21 @@ export function App() {
       setDownloadProgressByModelId((currentValue) => ({
         ...currentValue,
         [progressEvent.modelId]: progressEvent.progress
+      }));
+    });
+  }, []);
+
+  useEffect(() => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.onEpDownloadProgress !== 'function') {
+      return () => undefined;
+    }
+
+    return appApi.onEpDownloadProgress((progressEvent: FoundryEpDownloadProgressEvent) => {
+      setEpProgressByName((currentValue) => ({
+        ...currentValue,
+        [progressEvent.epName]: progressEvent.progress
       }));
     });
   }, []);
@@ -460,6 +645,72 @@ export function App() {
     }
   };
 
+  const refreshRuntime = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getRuntime !== 'function' || typeof appApi.getAppState !== 'function') {
+      return;
+    }
+
+    setIsRuntimeRefreshing(true);
+
+    try {
+      const [nextRuntime, nextState] = await Promise.all([appApi.getRuntime(), appApi.getAppState()]);
+      setRuntime(nextRuntime);
+      setState(nextState);
+    } finally {
+      setIsRuntimeRefreshing(false);
+    }
+  };
+
+  const toggleWebService = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.startWebService !== 'function' || typeof appApi.stopWebService !== 'function' || typeof appApi.getAppState !== 'function') {
+      return;
+    }
+
+    setIsWebServiceToggling(true);
+
+    try {
+      const nextRuntime = runtime.webServiceRunning ? await appApi.stopWebService() : await appApi.startWebService();
+      setRuntime(nextRuntime);
+      const nextState = await appApi.getAppState();
+      setState(nextState);
+    } finally {
+      setIsWebServiceToggling(false);
+    }
+  };
+
+  const registerExecutionProviders = async (epName?: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.registerExecutionProviders !== 'function' || typeof appApi.getRuntime !== 'function') {
+      return;
+    }
+
+    setIsRegisteringEps(true);
+
+    try {
+      await appApi.registerExecutionProviders(epName ? [epName] : undefined);
+      const nextRuntime = await appApi.getRuntime();
+      setRuntime(nextRuntime);
+      setEpProgressByName((currentValue) => {
+        const nextValue = { ...currentValue };
+
+        for (const provider of nextRuntime.executionProviders) {
+          if (provider.isRegistered) {
+            delete nextValue[provider.name];
+          }
+        }
+
+        return nextValue;
+      });
+    } finally {
+      setIsRegisteringEps(false);
+    }
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.15),_transparent_45%),linear-gradient(180deg,_hsl(var(--background)),_hsl(var(--muted)/0.45))] text-foreground transition-colors">
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -532,7 +783,7 @@ export function App() {
             <Routes>
               <Route path="/" element={<CatalogPage busyModelId={busyModelId} downloadProgressByModelId={downloadProgressByModelId} isLoading={isCatalogLoading} isRefreshing={isRefreshingCatalog} models={catalogModels} onMutateModel={mutateCatalogModel} onRefresh={refreshCatalog} />} />
               <Route path="/chat" element={<PlaceholderPage title="Chat" description="This page will use the Responses API first and only allow selecting locally downloaded models." />} />
-              <Route path="/runtime" element={<PlaceholderPage title="Runtime" description="This page will expose web service controls and execution provider management." />} />
+              <Route path="/runtime" element={<RuntimePage epProgressByName={epProgressByName} isRegisteringEps={isRegisteringEps} isRefreshing={isRuntimeRefreshing} isTogglingWebService={isWebServiceToggling} onRefresh={refreshRuntime} onRegisterEp={registerExecutionProviders} onToggleWebService={toggleWebService} runtime={runtime} />} />
               <Route path="/settings" element={<ThemeSettingCard />} />
             </Routes>
           </div>

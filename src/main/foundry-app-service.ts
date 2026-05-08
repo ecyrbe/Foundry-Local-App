@@ -1,17 +1,25 @@
 import { app } from 'electron';
-import { FoundryLocalManager, type FoundryLocalConfig, type IModel } from 'foundry-local-sdk';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { FoundryLocalManager, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel } from 'foundry-local-sdk';
 import {
   foundryLocalBootstrapConfig,
   type FoundryCatalogAction,
   type FoundryCatalogModelView,
   type FoundryCatalogView,
   type FoundryAppState,
+  type FoundryEpDownloadProgressEvent,
+  type FoundryEpDownloadResultView,
   type FoundryDownloadProgressEvent,
+  type FoundryRuntimeView,
   type FoundryErrorView
 } from '../shared/foundry-state.js';
 
-const userDataPath = app.getPath('userData');
-console.log(`Electron userData path: ${userDataPath}`);
+const epPreferencesFileName = 'execution-provider-preferences.json';
+
+interface FoundryEpPreferences {
+  preferredExecutionProviders: string[];
+}
 
 function toErrorView(error: unknown): FoundryErrorView {
   if (error instanceof Error) {
@@ -31,7 +39,11 @@ export class FoundryAppService {
 
   private startupConfig: FoundryLocalConfig | null = null;
 
+  private epPreferences: FoundryEpPreferences | null = null;
+
   private readonly downloadProgressListeners = new Set<(event: FoundryDownloadProgressEvent) => void>();
+
+  private readonly epDownloadProgressListeners = new Set<(event: FoundryEpDownloadProgressEvent) => void>();
 
   private state: FoundryAppState = {
     bootstrapStage: 'starting',
@@ -103,6 +115,79 @@ export class FoundryAppService {
     };
   }
 
+  async getRuntime(): Promise<FoundryRuntimeView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      return {
+        webServiceRunning: false,
+        webServiceUrls: [],
+        executionProviders: []
+      };
+    }
+
+    return this.readRuntimeView();
+  }
+
+  async startWebService(): Promise<FoundryRuntimeView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      return {
+        webServiceRunning: false,
+        webServiceUrls: [],
+        executionProviders: []
+      };
+    }
+
+    this.manager.startWebService();
+    await this.getAppState();
+
+    return this.readRuntimeView();
+  }
+
+  async stopWebService(): Promise<FoundryRuntimeView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      return {
+        webServiceRunning: false,
+        webServiceUrls: [],
+        executionProviders: []
+      };
+    }
+
+    this.manager.stopWebService();
+    await this.getAppState();
+
+    return this.readRuntimeView();
+  }
+
+  async registerExecutionProviders(epNames?: string[]): Promise<FoundryEpDownloadResultView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      return {
+        success: false,
+        status: 'Foundry Local manager is unavailable.',
+        registeredEps: [],
+        failedEps: []
+      };
+    }
+
+    const result = epNames && epNames.length > 0
+      ? await this.manager.downloadAndRegisterEps(epNames, (epName, progress) => {
+        this.emitEpDownloadProgress({ epName, progress });
+      })
+      : await this.manager.downloadAndRegisterEps((epName, progress) => {
+        this.emitEpDownloadProgress({ epName, progress });
+      });
+
+    await this.persistRegisteredExecutionProviders();
+
+    return toEpDownloadResultView(result);
+  }
+
   async mutateCatalogModel(modelId: string, action: FoundryCatalogAction): Promise<FoundryCatalogView> {
     await this.initialize();
 
@@ -137,17 +222,32 @@ export class FoundryAppService {
     };
   }
 
+  subscribeToEpDownloadProgress(listener: (event: FoundryEpDownloadProgressEvent) => void): () => void {
+    this.epDownloadProgressListeners.add(listener);
+
+    return () => {
+      this.epDownloadProgressListeners.delete(listener);
+    };
+  }
+
   private async initializeInternal(): Promise<void> {
     try {
       const startupConfig = this.getStartupConfig();
 
       this.manager = await FoundryLocalManager.createAsync(startupConfig);
+      try {
+        await this.restoreExecutionProviders();
+      } catch (error) {
+        this.state = {
+          ...this.state,
+          lastError: toErrorView(error)
+        };
+      }
       this.state = {
         ...this.state,
         startupConfigSummary: this.buildStartupConfigSummary(),
         bootstrapStage: 'ready',
         sdkStage: 'ready',
-        lastError: null,
         webServiceStage: this.manager.isWebServiceRunning ? 'running' : 'stopped',
         webServiceUrls: this.manager.urls
       };
@@ -173,6 +273,79 @@ export class FoundryAppService {
     }
 
     return this.startupConfig;
+  }
+
+  private async restoreExecutionProviders(): Promise<void> {
+    if (!this.manager) {
+      return;
+    }
+
+    const discoveredProviders = this.manager.discoverEps();
+    const availableProviderNames = discoveredProviders.map((provider) => provider.name);
+
+    if (availableProviderNames.length === 0) {
+      return;
+    }
+
+    const preferredProviders = await this.getPreferredExecutionProviders();
+    const providersToRegister = (preferredProviders.length > 0 ? preferredProviders : availableProviderNames)
+      .filter((providerName, index, providerNames) => providerNames.indexOf(providerName) === index)
+      .filter((providerName) => availableProviderNames.includes(providerName));
+
+    if (providersToRegister.length === 0) {
+      return;
+    }
+
+    await this.manager.downloadAndRegisterEps(providersToRegister);
+    await this.persistRegisteredExecutionProviders();
+  }
+
+  private async getPreferredExecutionProviders(): Promise<string[]> {
+    const preferences = await this.readEpPreferences();
+
+    return [...preferences.preferredExecutionProviders];
+  }
+
+  private async readEpPreferences(): Promise<FoundryEpPreferences> {
+    if (this.epPreferences) {
+      return this.epPreferences;
+    }
+
+    try {
+      const preferencesFile = await readFile(this.getEpPreferencesFilePath(), 'utf8');
+      const parsedPreferences = JSON.parse(preferencesFile) as Partial<FoundryEpPreferences>;
+
+      this.epPreferences = {
+        preferredExecutionProviders: Array.isArray(parsedPreferences.preferredExecutionProviders)
+          ? parsedPreferences.preferredExecutionProviders.filter((value): value is string => typeof value === 'string')
+          : []
+      };
+    } catch {
+      this.epPreferences = {
+        preferredExecutionProviders: []
+      };
+    }
+
+    return this.epPreferences;
+  }
+
+  private async persistRegisteredExecutionProviders(): Promise<void> {
+    if (!this.manager) {
+      return;
+    }
+
+    const preferences: FoundryEpPreferences = {
+      preferredExecutionProviders: this.manager.discoverEps().filter((provider) => provider.isRegistered).map((provider) => provider.name)
+    };
+
+    this.epPreferences = preferences;
+
+    await mkdir(path.dirname(this.getEpPreferencesFilePath()), { recursive: true });
+    await writeFile(this.getEpPreferencesFilePath(), JSON.stringify(preferences, null, 2), 'utf8');
+  }
+
+  private getEpPreferencesFilePath(): string {
+    return path.join(app.getPath('userData'), epPreferencesFileName);
   }
 
   private recordFailure(error: unknown, bootstrapFailed: boolean): void {
@@ -220,6 +393,44 @@ export class FoundryAppService {
       listener(event);
     }
   }
+
+  private emitEpDownloadProgress(event: FoundryEpDownloadProgressEvent): void {
+    for (const listener of this.epDownloadProgressListeners) {
+      listener(event);
+    }
+  }
+
+  private readRuntimeView(): FoundryRuntimeView {
+    if (!this.manager) {
+      return {
+        webServiceRunning: false,
+        webServiceUrls: [],
+        executionProviders: []
+      };
+    }
+
+    return {
+      webServiceRunning: this.manager.isWebServiceRunning,
+      webServiceUrls: [...this.manager.urls],
+      executionProviders: this.manager.discoverEps().map(toExecutionProviderView)
+    };
+  }
+}
+
+function toExecutionProviderView(ep: EpInfo) {
+  return {
+    name: ep.name,
+    isRegistered: ep.isRegistered
+  };
+}
+
+function toEpDownloadResultView(result: EpDownloadResult): FoundryEpDownloadResultView {
+  return {
+    success: result.success,
+    status: result.status,
+    registeredEps: [...result.registeredEps],
+    failedEps: [...result.failedEps]
+  };
 }
 
 function splitModalities(value: string | null): string[] {

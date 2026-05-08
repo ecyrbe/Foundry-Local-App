@@ -54,12 +54,40 @@ export interface FoundryDownloadProgressEvent {
   progress: number;
 }
 
+export interface FoundryExecutionProviderView {
+  name: string;
+  isRegistered: boolean;
+}
+
+export interface FoundryRuntimeView {
+  webServiceRunning: boolean;
+  webServiceUrls: string[];
+  executionProviders: FoundryExecutionProviderView[];
+}
+
+export interface FoundryEpDownloadProgressEvent {
+  epName: string;
+  progress: number;
+}
+
+export interface FoundryEpDownloadResultView {
+  success: boolean;
+  status: string;
+  registeredEps: string[];
+  failedEps: string[];
+}
+
 export interface FoundryAppApi {
   getAppState: () => Promise<FoundryAppState>;
   getCatalog: () => Promise<FoundryCatalogView>;
   refreshCatalog: () => Promise<FoundryCatalogView>;
   mutateCatalogModel: (modelId: string, action: FoundryCatalogAction) => Promise<FoundryCatalogView>;
+  getRuntime: () => Promise<FoundryRuntimeView>;
+  startWebService: () => Promise<FoundryRuntimeView>;
+  stopWebService: () => Promise<FoundryRuntimeView>;
+  registerExecutionProviders: (epNames?: string[]) => Promise<FoundryEpDownloadResultView>;
   onCatalogDownloadProgress: (listener: (event: FoundryDownloadProgressEvent) => void) => () => void;
+  onEpDownloadProgress: (listener: (event: FoundryEpDownloadProgressEvent) => void) => () => void;
 }
 
 declare global {
