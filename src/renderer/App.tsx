@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { Check, Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Monitor, Moon, Play, RefreshCw, Search, Settings, Square, Sun, Trash2 } from 'lucide-react';
+import { Check, Cpu, Download, LibraryBig, LoaderCircle, MessageSquare, Monitor, Moon, Play, Plus, RefreshCw, Search, SendHorizontal, Settings, Square, Sun, Trash2 } from 'lucide-react';
 import { useTheme, type ThemePreference } from '@/components/theme-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -13,6 +13,10 @@ import { cn } from '@/lib/utils';
 import type {
   FoundryAppState,
   FoundryCatalogAction,
+  FoundryChatMessageView,
+  FoundryChatStreamEvent,
+  FoundryChatSessionDetailView,
+  FoundryChatSessionView,
   FoundryCatalogModelView,
   FoundryDownloadProgressEvent,
   FoundryEpDownloadProgressEvent,
@@ -446,6 +450,210 @@ function RuntimePage(props: {
   );
 }
 
+function formatTimestamp(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+function ChatPage(props: {
+  activeSession: FoundryChatSessionDetailView | null;
+  availableModels: FoundryCatalogModelView[];
+  chatError: string | null;
+  draftMessage: string;
+  isCreatingSession: boolean;
+  isLoadingSession: boolean;
+  isSendingMessage: boolean;
+  onCreateSession: (modelId: string) => Promise<void>;
+  onDraftMessageChange: (value: string) => void;
+  onOpenSession: (sessionId: string) => Promise<void>;
+  onSendMessage: () => Promise<void>;
+  sessions: FoundryChatSessionView[];
+}) {
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const messageListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!selectedModelId && props.availableModels.length > 0) {
+      setSelectedModelId(props.availableModels[0].id);
+    }
+  }, [props.availableModels, selectedModelId]);
+
+  useEffect(() => {
+    const container = messageListRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [props.activeSession, props.isSendingMessage]);
+
+  const activeModelStillAvailable = props.activeSession
+    ? props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)
+    : true;
+
+  return (
+    <div className="grid min-h-[calc(100vh-10rem)] gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+      <Card className={cn(panelSurfaceClassName, 'min-h-0 xl:max-h-full')}>
+        <CardHeader>
+          <CardTitle>Sessions</CardTitle>
+          <CardDescription>
+            Start a new chat with a downloaded model and reopen prior sessions after restarting the app.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <label className="block text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">Downloaded model</label>
+            <select
+              value={selectedModelId}
+              onChange={(event) => {
+                setSelectedModelId(event.target.value);
+              }}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={props.availableModels.length === 0 || props.isCreatingSession}
+            >
+              {props.availableModels.length === 0 ? <option value="">No downloaded models available</option> : null}
+              {props.availableModels.map((model) => (
+                <option key={model.id} value={model.id}>{model.name} ({model.alias})</option>
+              ))}
+            </select>
+          </div>
+          <Button type="button" className="w-full" disabled={!selectedModelId || props.isCreatingSession} onClick={() => {
+            void props.onCreateSession(selectedModelId);
+          }}>
+            {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            New session
+          </Button>
+
+          <div className="space-y-2">
+            {props.sessions.length > 0 ? props.sessions.map((session) => {
+              const isActive = props.activeSession?.session.id === session.id;
+
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  className={cn(
+                    'flex w-full flex-col gap-1 rounded-xl border border-border/70 px-3 py-3 text-left transition-colors',
+                    isActive ? 'bg-secondary text-secondary-foreground' : 'bg-background/40 hover:bg-accent hover:text-accent-foreground'
+                  )}
+                  onClick={() => {
+                    void props.onOpenSession(session.id);
+                  }}
+                >
+                  <span className="truncate text-sm font-medium" title={session.title}>{session.title}</span>
+                  <span className="truncate text-xs text-muted-foreground" title={session.modelName}>{session.modelName}</span>
+                  <span className="text-xs text-muted-foreground">{session.messageCount} messages</span>
+                </button>
+              );
+            }) : (
+              <p className="text-sm text-muted-foreground">No sessions yet. Create one from a downloaded model to start chatting.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className={cn(panelSurfaceClassName, 'flex min-h-0 flex-col')}>
+        <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <CardTitle>{props.activeSession ? props.activeSession.session.title : 'Chat'}</CardTitle>
+            <CardDescription className="mt-2 max-w-3xl text-pretty break-words">
+              {props.activeSession
+                ? `Talking to ${props.activeSession.session.modelName}. Sessions are persisted locally in the app.`
+                : 'Select or create a session to start chatting with a downloaded model.'}
+            </CardDescription>
+          </div>
+          {props.activeSession ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{props.activeSession.session.modelAlias}</Badge>
+              {activeModelStillAvailable ? <Badge variant="success">Model available</Badge> : <Badge variant="destructive">Model missing</Badge>}
+            </div>
+          ) : null}
+        </CardHeader>
+
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
+          {props.chatError ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {props.chatError}
+            </div>
+          ) : null}
+
+          <div ref={messageListRef} className="min-h-0 flex-1 space-y-3 overflow-auto rounded-xl border border-border/70 bg-background/30 p-3">
+            {props.activeSession ? props.activeSession.messages.length > 0 ? props.activeSession.messages.map((message: FoundryChatMessageView) => (
+              <div key={message.id} className={cn('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div className={cn(
+                  'max-w-[min(100%,42rem)] rounded-2xl px-4 py-3 text-sm shadow-sm',
+                  message.role === 'user'
+                    ? 'bg-primary text-primary-foreground'
+                    : message.failed
+                      ? 'border border-destructive/30 bg-destructive/10 text-destructive'
+                      : 'border border-border/70 bg-card text-card-foreground'
+                )}>
+                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  <p className={cn('mt-2 text-[11px]', message.role === 'user' ? 'text-primary-foreground/80' : message.failed ? 'text-destructive/80' : 'text-muted-foreground')}>
+                    {formatTimestamp(message.createdAt)}
+                  </p>
+                </div>
+              </div>
+            )) : (
+              <div className="flex h-full items-center justify-center">
+                <p className="max-w-md text-center text-sm text-muted-foreground">Send the first message to start this session.</p>
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center">
+                <p className="max-w-md text-center text-sm text-muted-foreground">Create a session from the left panel to begin chatting.</p>
+              </div>
+            )}
+            {props.isLoadingSession ? (
+              <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                <LoaderCircle className="mr-2 size-4 animate-spin" />
+                Loading session
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-background/40 p-3">
+            <textarea
+              value={props.draftMessage}
+              onChange={(event) => {
+                props.onDraftMessageChange(event.target.value);
+              }}
+              placeholder={props.activeSession ? 'Message the current session' : 'Create a session first'}
+              className="min-h-28 w-full resize-none rounded-lg border border-input bg-background px-3 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!props.activeSession || !activeModelStillAvailable || props.isSendingMessage}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                {props.activeSession
+                  ? activeModelStillAvailable
+                    ? 'Plain-text responses first. Session history is stored locally by the app.'
+                    : 'This session model is no longer downloaded. Re-download it from Catalog to continue.'
+                  : 'Select a downloaded model and create a session to start.'}
+              </p>
+              <Button type="button" disabled={!props.activeSession || !activeModelStillAvailable || !props.draftMessage.trim() || props.isSendingMessage} onClick={() => {
+                void props.onSendMessage();
+              }}>
+                {props.isSendingMessage ? <LoaderCircle className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
+                Send
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export function App() {
   const [state, setState] = useState<FoundryAppState>(loadingState);
   const [catalogModels, setCatalogModels] = useState<FoundryCatalogModelView[]>([]);
@@ -453,11 +661,18 @@ export function App() {
   const [downloadProgressByModelId, setDownloadProgressByModelId] = useState<Record<string, number>>({});
   const [runtime, setRuntime] = useState<FoundryRuntimeView>({ webServiceRunning: false, webServiceUrls: [], executionProviders: [] });
   const [epProgressByName, setEpProgressByName] = useState<Record<string, number>>({});
+  const [chatSessions, setChatSessions] = useState<FoundryChatSessionView[]>([]);
+  const [activeChatSession, setActiveChatSession] = useState<FoundryChatSessionDetailView | null>(null);
+  const [chatDraftMessage, setChatDraftMessage] = useState('');
+  const [chatError, setChatError] = useState<string | null>(null);
   const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
   const [isRuntimeRefreshing, setIsRuntimeRefreshing] = useState(true);
   const [isWebServiceToggling, setIsWebServiceToggling] = useState(false);
   const [isRegisteringEps, setIsRegisteringEps] = useState(false);
+  const [isChatSessionLoading, setIsChatSessionLoading] = useState(true);
+  const [isCreatingChatSession, setIsCreatingChatSession] = useState(false);
+  const [isSendingChatMessage, setIsSendingChatMessage] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const loadedModelCount = catalogModels.filter((model) => model.loaded).length;
 
@@ -495,6 +710,55 @@ export function App() {
             message: error instanceof Error ? error.message : 'Failed to query app state over IPC'
           }
         });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getChatSessions !== 'function' || typeof appApi.getChatSession !== 'function') {
+      setIsChatSessionLoading(false);
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void appApi.getChatSessions().then(async (chatView) => {
+      if (cancelled) {
+        return;
+      }
+
+      setChatSessions(chatView.sessions);
+
+      if (chatView.activeSessionId) {
+        try {
+          const sessionDetail = await appApi.getChatSession(chatView.activeSessionId);
+
+          if (!cancelled) {
+            setActiveChatSession(sessionDetail);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setChatError(error instanceof Error ? error.message : 'Failed to load the active chat session.');
+          }
+        }
+      }
+
+      if (!cancelled) {
+        setIsChatSessionLoading(false);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setChatError(error instanceof Error ? error.message : 'Failed to load chat sessions.');
+        setIsChatSessionLoading(false);
       }
     });
 
@@ -560,6 +824,71 @@ export function App() {
         ...currentValue,
         [progressEvent.epName]: progressEvent.progress
       }));
+    });
+  }, []);
+
+  useEffect(() => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.onChatStreamEvent !== 'function') {
+      return () => undefined;
+    }
+
+    return appApi.onChatStreamEvent((streamEvent: FoundryChatStreamEvent) => {
+      setActiveChatSession((currentValue) => {
+        if (!currentValue || currentValue.session.id !== streamEvent.sessionId) {
+          return currentValue;
+        }
+
+        if (streamEvent.type === 'assistant-message-started') {
+          if (currentValue.messages.some((message) => message.id === streamEvent.message.id)) {
+            return currentValue;
+          }
+
+          return {
+            session: {
+              ...currentValue.session,
+              updatedAt: streamEvent.message.createdAt,
+              messageCount: currentValue.messages.length + 1
+            },
+            messages: [...currentValue.messages, streamEvent.message]
+          };
+        }
+
+        if (streamEvent.type === 'assistant-message-delta') {
+          return {
+            session: {
+              ...currentValue.session,
+              updatedAt: new Date().toISOString()
+            },
+            messages: currentValue.messages.map((message) => message.id === streamEvent.messageId ? { ...message, content: message.content + streamEvent.delta } : message)
+          };
+        }
+
+        if (streamEvent.type === 'assistant-message-completed') {
+          return {
+            session: {
+              ...currentValue.session,
+              lastResponseId: streamEvent.responseId,
+              updatedAt: new Date().toISOString()
+            },
+            messages: currentValue.messages
+          };
+        }
+
+        if (currentValue.messages.some((message) => message.id === streamEvent.message.id)) {
+          return currentValue;
+        }
+
+        return {
+          session: {
+            ...currentValue.session,
+            updatedAt: streamEvent.message.createdAt,
+            messageCount: currentValue.messages.length + 1
+          },
+          messages: [...currentValue.messages, streamEvent.message]
+        };
+      });
     });
   }, []);
 
@@ -711,6 +1040,102 @@ export function App() {
     }
   };
 
+  const openChatSession = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getChatSession !== 'function' || typeof appApi.getChatSessions !== 'function') {
+      return;
+    }
+
+    setIsChatSessionLoading(true);
+    setChatError(null);
+
+    try {
+      const [sessionDetail, chatView] = await Promise.all([appApi.getChatSession(sessionId), appApi.getChatSessions()]);
+      setActiveChatSession(sessionDetail);
+      setChatSessions(chatView.sessions);
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'Failed to open chat session.');
+    } finally {
+      setIsChatSessionLoading(false);
+    }
+  };
+
+  const createChatSession = async (modelId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.createChatSession !== 'function' || typeof appApi.getChatSessions !== 'function') {
+      return;
+    }
+
+    setIsCreatingChatSession(true);
+    setChatError(null);
+
+    try {
+      const sessionDetail = await appApi.createChatSession(modelId);
+      const chatView = await appApi.getChatSessions();
+      setActiveChatSession(sessionDetail);
+      setChatSessions(chatView.sessions);
+      setChatDraftMessage('');
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'Failed to create chat session.');
+    } finally {
+      setIsCreatingChatSession(false);
+    }
+  };
+
+  const sendChatMessage = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!activeChatSession || !appApi || typeof appApi.sendChatMessage !== 'function' || typeof appApi.getChatSessions !== 'function' || !chatDraftMessage.trim()) {
+      return;
+    }
+
+    const nextDraftMessage = chatDraftMessage;
+
+    setIsSendingChatMessage(true);
+    setChatError(null);
+    setChatDraftMessage('');
+
+    const optimisticUserMessage: FoundryChatMessageView = {
+      id: `optimistic-${Date.now()}`,
+      role: 'user',
+      content: nextDraftMessage,
+      createdAt: new Date().toISOString()
+    };
+
+    setActiveChatSession((currentValue) => currentValue ? {
+      session: {
+        ...currentValue.session,
+        updatedAt: optimisticUserMessage.createdAt,
+        messageCount: currentValue.messages.length + 1
+      },
+      messages: [...currentValue.messages, optimisticUserMessage]
+    } : currentValue);
+
+    try {
+      const result = await appApi.sendChatMessage(activeChatSession.session.id, nextDraftMessage);
+      const chatView = await appApi.getChatSessions();
+      setActiveChatSession(result.session);
+      setChatSessions(chatView.sessions);
+    } catch (error) {
+      setActiveChatSession((currentValue) => currentValue ? {
+        session: {
+          ...currentValue.session,
+          updatedAt: currentValue.session.updatedAt,
+          messageCount: Math.max(0, currentValue.messages.filter((message) => message.id !== optimisticUserMessage.id).length)
+        },
+        messages: currentValue.messages.filter((message) => message.id !== optimisticUserMessage.id)
+      } : currentValue);
+      setChatDraftMessage(nextDraftMessage);
+      setChatError(error instanceof Error ? error.message : 'Failed to send chat message.');
+    } finally {
+      setIsSendingChatMessage(false);
+    }
+  };
+
+  const downloadedModels = useMemo(() => catalogModels.filter((model) => model.downloaded), [catalogModels]);
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.15),_transparent_45%),linear-gradient(180deg,_hsl(var(--background)),_hsl(var(--muted)/0.45))] text-foreground transition-colors">
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -782,7 +1207,7 @@ export function App() {
             ) : null}
             <Routes>
               <Route path="/" element={<CatalogPage busyModelId={busyModelId} downloadProgressByModelId={downloadProgressByModelId} isLoading={isCatalogLoading} isRefreshing={isRefreshingCatalog} models={catalogModels} onMutateModel={mutateCatalogModel} onRefresh={refreshCatalog} />} />
-              <Route path="/chat" element={<PlaceholderPage title="Chat" description="This page will use the Responses API first and only allow selecting locally downloaded models." />} />
+              <Route path="/chat" element={<ChatPage activeSession={activeChatSession} availableModels={downloadedModels} chatError={chatError} draftMessage={chatDraftMessage} isCreatingSession={isCreatingChatSession} isLoadingSession={isChatSessionLoading} isSendingMessage={isSendingChatMessage} onCreateSession={createChatSession} onDraftMessageChange={setChatDraftMessage} onOpenSession={openChatSession} onSendMessage={sendChatMessage} sessions={chatSessions} />} />
               <Route path="/runtime" element={<RuntimePage epProgressByName={epProgressByName} isRegisteringEps={isRegisteringEps} isRefreshing={isRuntimeRefreshing} isTogglingWebService={isWebServiceToggling} onRefresh={refreshRuntime} onRegisterEp={registerExecutionProviders} onToggleWebService={toggleWebService} runtime={runtime} />} />
               <Route path="/settings" element={<ThemeSettingCard />} />
             </Routes>

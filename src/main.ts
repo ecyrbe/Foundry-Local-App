@@ -2,12 +2,13 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { foundryAppService } from './main/foundry-app-service.js';
-import type { FoundryDownloadProgressEvent, FoundryEpDownloadProgressEvent } from './shared/foundry-state.js';
+import type { FoundryChatStreamEvent, FoundryDownloadProgressEvent, FoundryEpDownloadProgressEvent } from './shared/foundry-state.js';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 let unsubscribeFromDownloadProgress: (() => void) | null = null;
 let unsubscribeFromEpDownloadProgress: (() => void) | null = null;
+let unsubscribeFromChatStream: (() => void) | null = null;
 
 const createWindow = (): void => {
   const window = new BrowserWindow({
@@ -35,6 +36,11 @@ app.whenReady().then(() => {
       window.webContents.send('foundry-local-app:ep-download-progress', progressEvent);
     }
   });
+  unsubscribeFromChatStream = foundryAppService.subscribeToChatStream((streamEvent: FoundryChatStreamEvent) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('foundry-local-app:chat-stream-event', streamEvent);
+    }
+  });
 
   ipcMain.handle('foundry-local-app:get-app-state', () => foundryAppService.getAppState());
   ipcMain.handle('foundry-local-app:get-catalog', () => foundryAppService.getCatalog());
@@ -44,6 +50,10 @@ app.whenReady().then(() => {
   ipcMain.handle('foundry-local-app:start-web-service', () => foundryAppService.startWebService());
   ipcMain.handle('foundry-local-app:stop-web-service', () => foundryAppService.stopWebService());
   ipcMain.handle('foundry-local-app:register-execution-providers', (_event, epNames?: string[]) => foundryAppService.registerExecutionProviders(epNames));
+  ipcMain.handle('foundry-local-app:get-chat-sessions', () => foundryAppService.getChatSessions());
+  ipcMain.handle('foundry-local-app:get-chat-session', (_event, sessionId: string) => foundryAppService.getChatSession(sessionId));
+  ipcMain.handle('foundry-local-app:create-chat-session', (_event, modelId: string) => foundryAppService.createChatSession(modelId));
+  ipcMain.handle('foundry-local-app:send-chat-message', (_event, sessionId: string, message: string) => foundryAppService.sendChatMessage(sessionId, message));
 
   createWindow();
 
@@ -69,6 +79,11 @@ app.on('will-quit', () => {
   ipcMain.removeHandler('foundry-local-app:start-web-service');
   ipcMain.removeHandler('foundry-local-app:stop-web-service');
   ipcMain.removeHandler('foundry-local-app:register-execution-providers');
+  ipcMain.removeHandler('foundry-local-app:get-chat-sessions');
+  ipcMain.removeHandler('foundry-local-app:get-chat-session');
+  ipcMain.removeHandler('foundry-local-app:create-chat-session');
+  ipcMain.removeHandler('foundry-local-app:send-chat-message');
   unsubscribeFromDownloadProgress?.();
   unsubscribeFromEpDownloadProgress?.();
+  unsubscribeFromChatStream?.();
 });

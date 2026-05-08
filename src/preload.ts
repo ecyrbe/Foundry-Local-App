@@ -10,6 +10,10 @@ const foundryLocalAppApi: FoundryAppApi = {
   startWebService: () => ipcRenderer.invoke('foundry-local-app:start-web-service'),
   stopWebService: () => ipcRenderer.invoke('foundry-local-app:stop-web-service'),
   registerExecutionProviders: (epNames) => ipcRenderer.invoke('foundry-local-app:register-execution-providers', epNames),
+  getChatSessions: () => ipcRenderer.invoke('foundry-local-app:get-chat-sessions'),
+  getChatSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:get-chat-session', sessionId),
+  createChatSession: (modelId) => ipcRenderer.invoke('foundry-local-app:create-chat-session', modelId),
+  sendChatMessage: (sessionId, message) => ipcRenderer.invoke('foundry-local-app:send-chat-message', sessionId, message),
   onCatalogDownloadProgress: (listener) => {
     const wrappedListener = (_event: unknown, progressEvent: Parameters<typeof listener>[0]) => {
       listener(progressEvent);
@@ -30,6 +34,17 @@ const foundryLocalAppApi: FoundryAppApi = {
 
     return () => {
       ipcRenderer.removeListener('foundry-local-app:ep-download-progress', wrappedListener);
+    };
+  },
+  onChatStreamEvent: (listener) => {
+    const wrappedListener = (_event: unknown, streamEvent: Parameters<typeof listener>[0]) => {
+      listener(streamEvent);
+    };
+
+    ipcRenderer.on('foundry-local-app:chat-stream-event', wrappedListener);
+
+    return () => {
+      ipcRenderer.removeListener('foundry-local-app:chat-stream-event', wrappedListener);
     };
   }
 };

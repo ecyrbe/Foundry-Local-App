@@ -77,6 +77,66 @@ export interface FoundryEpDownloadResultView {
   failedEps: string[];
 }
 
+export type FoundryChatMessageRole = 'user' | 'assistant';
+
+export interface FoundryChatMessageView {
+  id: string;
+  role: FoundryChatMessageRole;
+  content: string;
+  createdAt: string;
+  failed?: boolean;
+}
+
+export interface FoundryChatSessionView {
+  id: string;
+  title: string;
+  modelId: string;
+  modelName: string;
+  modelAlias: string;
+  lastResponseId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface FoundryChatSessionDetailView {
+  session: FoundryChatSessionView;
+  messages: FoundryChatMessageView[];
+}
+
+export interface FoundryChatView {
+  sessions: FoundryChatSessionView[];
+  activeSessionId: string | null;
+}
+
+export interface FoundryChatSendResultView {
+  session: FoundryChatSessionDetailView;
+}
+
+export type FoundryChatStreamEvent =
+  | {
+    type: 'assistant-message-started';
+    sessionId: string;
+    message: FoundryChatMessageView;
+  }
+  | {
+    type: 'assistant-message-delta';
+    sessionId: string;
+    messageId: string;
+    delta: string;
+  }
+  | {
+    type: 'assistant-message-completed';
+    sessionId: string;
+    messageId: string;
+    responseId: string | null;
+  }
+  | {
+    type: 'assistant-message-failed';
+    sessionId: string;
+    message: FoundryChatMessageView;
+  };
+
 export interface FoundryAppApi {
   getAppState: () => Promise<FoundryAppState>;
   getCatalog: () => Promise<FoundryCatalogView>;
@@ -86,8 +146,13 @@ export interface FoundryAppApi {
   startWebService: () => Promise<FoundryRuntimeView>;
   stopWebService: () => Promise<FoundryRuntimeView>;
   registerExecutionProviders: (epNames?: string[]) => Promise<FoundryEpDownloadResultView>;
+  getChatSessions: () => Promise<FoundryChatView>;
+  getChatSession: (sessionId: string) => Promise<FoundryChatSessionDetailView>;
+  createChatSession: (modelId: string) => Promise<FoundryChatSessionDetailView>;
+  sendChatMessage: (sessionId: string, message: string) => Promise<FoundryChatSendResultView>;
   onCatalogDownloadProgress: (listener: (event: FoundryDownloadProgressEvent) => void) => () => void;
   onEpDownloadProgress: (listener: (event: FoundryEpDownloadProgressEvent) => void) => () => void;
+  onChatStreamEvent: (listener: (event: FoundryChatStreamEvent) => void) => () => void;
 }
 
 declare global {

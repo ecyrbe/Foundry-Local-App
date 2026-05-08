@@ -33,5 +33,6 @@ Current intended scope:
 - Because the app loads from `file://`, router work should use `HashRouter`, not `BrowserRouter`.
 - Prefer `FoundryLocalManager.createAsync()` during app startup.
 - Prefer `ResponsesClient` for the first chat implementation because it has the strongest type surface.
+- Chat sessions should behave like standard threaded conversations and persist in app-owned storage; do not rely on the SDK as the source of truth for session lists or transcript history.
 - Downloaded models should be managed from the Catalog page via filters and per-model actions, not from a separate navigation page.
 - Loaded models should be surfaced in a persistent status area and relevant badges, not as a dedicated navigation page.
