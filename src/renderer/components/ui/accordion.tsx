@@ -113,15 +113,20 @@ function AccordionContent({ children, className, ...props }: React.ComponentProp
       id={itemContext.contentId}
       role="region"
       aria-labelledby={itemContext.triggerId}
+      aria-hidden={!itemContext.isOpen}
       data-state={itemContext.isOpen ? 'open' : 'closed'}
-      hidden={!itemContext.isOpen}
       className={cn(
-        'grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-out data-[state=closed]:grid-rows-[0fr] data-[state=closed]:opacity-0 data-[state=open]:grid-rows-[1fr] data-[state=open]:opacity-100',
+        'grid overflow-hidden transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:grid-rows-[0fr] data-[state=open]:grid-rows-[1fr] motion-reduce:transition-none',
         className
       )}
       {...props}
     >
-      <div className="min-h-0 overflow-hidden">{children}</div>
+      <div
+        data-state={itemContext.isOpen ? 'open' : 'closed'}
+        className="min-h-0 overflow-hidden transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:-translate-y-1 data-[state=closed]:opacity-0 data-[state=open]:translate-y-0 data-[state=open]:opacity-100 motion-reduce:transition-none"
+      >
+        {children}
+      </div>
     </div>
   );
 }
