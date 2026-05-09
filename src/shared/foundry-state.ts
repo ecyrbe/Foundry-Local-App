@@ -151,6 +151,7 @@ export interface FoundryAppApi {
   getChatSessions: () => Promise<FoundryChatView>;
   getChatSession: (sessionId: string) => Promise<FoundryChatSessionDetailView>;
   createChatSession: (modelId: string) => Promise<FoundryChatSessionDetailView>;
+  updateChatSessionModel: (sessionId: string, modelId: string) => Promise<FoundryChatSessionDetailView>;
   deleteChatSession: (sessionId: string) => Promise<FoundryChatView>;
   loadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   unloadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;

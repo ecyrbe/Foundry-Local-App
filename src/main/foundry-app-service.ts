@@ -280,6 +280,53 @@ export class FoundryAppService {
     return toChatSessionDetailView(chatSession);
   }
 
+  async updateChatSessionModel(sessionId: string, modelId: string): Promise<FoundryChatSessionDetailView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const chatSessionsState = await this.readChatSessionsState();
+    const sessionIndex = chatSessionsState.sessions.findIndex((session) => session.id === sessionId);
+
+    if (sessionIndex === -1) {
+      throw new Error('Chat session not found.');
+    }
+
+    const chatSession = chatSessionsState.sessions[sessionIndex];
+
+    if (chatSession.messages.length > 0) {
+      throw new Error('Only empty sessions can change models.');
+    }
+
+    if (await this.isAnyModelLoaded()) {
+      throw new Error('Unload the currently loaded model before changing session models.');
+    }
+
+    const model = await this.manager.catalog.getModelVariant(modelId);
+
+    if (!model.isCached) {
+      throw new Error('Only downloaded models can be used for chat sessions.');
+    }
+
+    if (!supportsTextChat(model)) {
+      throw new Error('Only text chat models can be used for chat sessions.');
+    }
+
+    chatSession.modelId = model.id;
+    chatSession.modelName = model.info.displayName ?? model.info.name;
+    chatSession.modelAlias = model.alias;
+    chatSession.title = buildChatSessionTitle(chatSession.modelName);
+    chatSession.lastResponseId = null;
+    chatSession.needsContextHydration = false;
+    chatSession.updatedAt = new Date().toISOString();
+
+    await this.persistChatSessionsState();
+
+    return toChatSessionDetailView(chatSession);
+  }
+
   async deleteChatSession(sessionId: string): Promise<FoundryChatView> {
     await this.initialize();
 
@@ -815,6 +862,15 @@ export class FoundryAppService {
     } catch {
       return false;
     }
+  }
+
+  private async isAnyModelLoaded(): Promise<boolean> {
+    if (!this.manager) {
+      return false;
+    }
+
+    const loadedModels = await this.manager.catalog.getLoadedModels();
+    return loadedModels.length > 0;
   }
 
   private emitDownloadProgress(event: FoundryDownloadProgressEvent): void {

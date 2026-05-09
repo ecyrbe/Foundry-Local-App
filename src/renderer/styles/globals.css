@@ -119,7 +119,35 @@ body {
   overflow: hidden;
 }
 
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 a {
   color: inherit;
   text-decoration: none;
+}
+
+.badge-success {
+  background: hsl(142 76% 92%);
+  color: hsl(142 84% 12%);
+  box-shadow: inset 0 0 0 1px hsl(142 70% 24% / 0.12);
+}
+
+:root[data-theme='dark'] .badge-success {
+  background: hsl(142 70% 45% / 0.2);
+  color: hsl(138 76% 95%);
+  box-shadow: inset 0 0 0 1px hsl(142 70% 60% / 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .badge-success {
+    background: hsl(142 70% 45% / 0.2);
+    color: hsl(138 76% 95%);
+    box-shadow: inset 0 0 0 1px hsl(142 70% 60% / 0.25);
+  }
 }
