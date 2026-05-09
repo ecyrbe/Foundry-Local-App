@@ -1,0 +1,56 @@
+name: Release MSIX
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-msix:
+    runs-on: windows-latest
+    env:
+      APPX_APPLICATION_ID: ${{ vars.APPX_APPLICATION_ID }}
+      APPX_IDENTITY_NAME: ${{ vars.APPX_IDENTITY_NAME }}
+      APPX_PUBLISHER: ${{ secrets.APPX_PUBLISHER }}
+      APPX_PUBLISHER_DISPLAY_NAME: ${{ vars.APPX_PUBLISHER_DISPLAY_NAME }}
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release signing configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:APPX_PUBLISHER)) {
+            throw 'APPX_PUBLISHER secret is required to build a releasable MSIX.'
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_BASE64)) {
+            throw 'WINDOWS_CERT_BASE64 secret is required to sign the MSIX.'
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)) {
+            throw 'WINDOWS_CERT_PASSWORD secret is required to sign the MSIX.'
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build signed MSIX artifact
+        run: npm run dist:win:msix
+
+      - name: Upload MSIX to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.msix
+          generate_release_notes: true

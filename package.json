@@ -5,11 +5,14 @@
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
+    "assets:icons": "node scripts/generate-icons.mjs",
     "build": "tsc && vite build",
     "build:main": "tsc",
     "build:renderer": "vite build",
     "dev:renderer": "vite",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "dist:win:unpacked": "npm run assets:icons && npm run build && electron-builder --config electron-builder.config.mjs --dir --win --x64",
+    "dist:win:msix": "npm run dist:win:unpacked && node scripts/convert-appx-to-msix.mjs"
   },
   "keywords": [
     "electron",
@@ -28,7 +31,10 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron": "^35.1.5",
+    "electron-builder": "^26.0.12",
     "lucide-react": "^1.14.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.4",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.4",
     "tailwindcss-animate": "^1.0.7",
