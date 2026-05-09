@@ -2,8 +2,12 @@ import { app } from 'electron';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import type { DeviceInfo, IoStreamRead } from 'naudiodon2';
 import { FoundryLocalManager, getOutputText, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel, type ResponseInputItem } from 'foundry-local-sdk';
 import {
+  type FoundryAudioInputDeviceView,
+  type FoundryAudioSettingsInput,
+  type FoundryAudioSettingsView,
   foundryLocalBootstrapConfig,
   type FoundryCatalogAction,
   type FoundryCatalogModelView,
@@ -18,12 +22,19 @@ import {
   type FoundryEpDownloadProgressEvent,
   type FoundryEpDownloadResultView,
   type FoundryDownloadProgressEvent,
+  type FoundryTranscriptEntryView,
+  type FoundryTranscriptSessionDetailView,
+  type FoundryTranscriptSessionView,
+  type FoundryTranscriptStreamEvent,
+  type FoundryTranscriptView,
   type FoundryRuntimeView,
   type FoundryErrorView
 } from '../shared/foundry-state.js';
 
 const epPreferencesFileName = 'execution-provider-preferences.json';
 const chatSessionsFileName = 'chat-sessions.json';
+const transcriptSessionsFileName = 'transcript-sessions.json';
+const audioSettingsFileName = 'audio-settings.json';
 
 interface FoundryEpPreferences {
   preferredExecutionProviders: string[];
@@ -47,6 +58,101 @@ interface StoredChatSessionsState {
   sessions: StoredChatSession[];
 }
 
+interface StoredTranscriptEntry {
+  id: string;
+  content: string;
+  createdAt: string;
+  startTime: number | null;
+  endTime: number | null;
+  failed?: boolean;
+}
+
+interface StoredTranscriptSession {
+  id: string;
+  title: string;
+  modelId: string;
+  modelName: string;
+  modelAlias: string;
+  createdAt: string;
+  updatedAt: string;
+  entries: StoredTranscriptEntry[];
+}
+
+interface StoredTranscriptSessionsState {
+  activeSessionId: string | null;
+  sessions: StoredTranscriptSession[];
+}
+
+interface StoredAudioSettings extends FoundryAudioSettingsInput {}
+
+interface LiveTranscriptionResult {
+  is_final: boolean;
+  content?: Array<{
+    text?: string | null;
+    transcript?: string | null;
+  }>;
+  start_time?: number | null;
+  end_time?: number | null;
+}
+
+interface LiveTranscriptionSessionLike {
+  settings: {
+    sampleRate: number;
+    channels: number;
+    bitsPerSample: number;
+    language?: string;
+  };
+  start(): Promise<void>;
+  append(pcmData: Uint8Array): Promise<void>;
+  getStream(): AsyncGenerator<LiveTranscriptionResult>;
+  stop(): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+interface AudioClientLike {
+  settings?: {
+    language?: string;
+  };
+  createLiveTranscriptionSession(): LiveTranscriptionSessionLike;
+}
+
+interface NaudiodonModuleLike {
+  getDevices(): DeviceInfo[];
+  AudioIO(options: { inOptions: {
+    deviceId?: number;
+    channelCount?: number;
+    sampleFormat?: 16 | 32;
+    sampleRate?: number;
+    framesPerBuffer?: number;
+    maxQueue?: number;
+    closeOnError?: boolean;
+  } }): IoStreamRead;
+  SampleFormat16Bit: 16;
+  SampleFormat32Bit: 32;
+}
+
+interface ActiveTranscriptRuntime {
+  sessionId: string;
+  modelId: string;
+  session: LiveTranscriptionSessionLike;
+  audioInput: IoStreamRead;
+  previewText: string;
+  appendQueue: Uint8Array[];
+  pumpError: unknown;
+  pumping: boolean;
+  stopRequested: boolean;
+  lifecyclePromise: Promise<void> | null;
+  stopPromise: Promise<void> | null;
+}
+
+const defaultAudioSettings: StoredAudioSettings = {
+  selectedInputDeviceId: null,
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  language: 'en'
+};
+
 function toErrorView(error: unknown): FoundryErrorView {
   if (error instanceof Error) {
     return {
@@ -69,11 +175,19 @@ export class FoundryAppService {
 
   private chatSessionsState: StoredChatSessionsState | null = null;
 
+  private transcriptSessionsState: StoredTranscriptSessionsState | null = null;
+
+  private audioSettings: StoredAudioSettings | null = null;
+
+  private activeTranscriptRuntime: ActiveTranscriptRuntime | null = null;
+
   private readonly downloadProgressListeners = new Set<(event: FoundryDownloadProgressEvent) => void>();
 
   private readonly epDownloadProgressListeners = new Set<(event: FoundryEpDownloadProgressEvent) => void>();
 
   private readonly chatStreamListeners = new Set<(event: FoundryChatStreamEvent) => void>();
+
+  private readonly transcriptStreamListeners = new Set<(event: FoundryTranscriptStreamEvent) => void>();
 
   private state: FoundryAppState = {
     bootstrapStage: 'starting',
@@ -218,6 +332,42 @@ export class FoundryAppService {
     return toEpDownloadResultView(result);
   }
 
+  async getAudioSettings(): Promise<FoundryAudioSettingsView> {
+    await this.initialize();
+
+    const settings = await this.readAudioSettings();
+    const availableInputDevices = await this.readAudioInputDevices();
+    const selectedDeviceStillExists = settings.selectedInputDeviceId === null
+      || availableInputDevices.some((device) => device.id === settings.selectedInputDeviceId);
+
+    return {
+      ...settings,
+      selectedInputDeviceId: selectedDeviceStillExists ? settings.selectedInputDeviceId : null,
+      availableInputDevices,
+      deviceAccessError: null
+    };
+  }
+
+  async updateAudioSettings(settings: FoundryAudioSettingsInput): Promise<FoundryAudioSettingsView> {
+    await this.initialize();
+
+    const nextSettings = normalizeAudioSettings(settings);
+    const availableInputDevices = await this.readAudioInputDevices();
+
+    if (nextSettings.selectedInputDeviceId !== null && !availableInputDevices.some((device) => device.id === nextSettings.selectedInputDeviceId)) {
+      throw new Error('Selected audio input device is not available.');
+    }
+
+    this.audioSettings = nextSettings;
+    await this.persistAudioSettings();
+
+    return {
+      ...nextSettings,
+      availableInputDevices,
+      deviceAccessError: null
+    };
+  }
+
   async getChatSessions(): Promise<FoundryChatView> {
     await this.initialize();
 
@@ -227,6 +377,25 @@ export class FoundryAppService {
       sessions: await this.toChatSessionViews(chatSessionsState.sessions),
       activeSessionId: chatSessionsState.activeSessionId
     };
+  }
+
+  async getTranscriptSessions(): Promise<FoundryTranscriptView> {
+    await this.initialize();
+
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+
+    return {
+      sessions: await this.toTranscriptSessionViews(transcriptSessionsState.sessions),
+      activeSessionId: transcriptSessionsState.activeSessionId
+    };
+  }
+
+  async getTranscriptSession(sessionId: string): Promise<FoundryTranscriptSessionDetailView> {
+    await this.initialize();
+
+    const transcriptSession = await this.requireTranscriptSession(sessionId);
+
+    return toTranscriptSessionDetailView(transcriptSession, this.activeTranscriptRuntime?.sessionId === transcriptSession.id);
   }
 
   async getChatSession(sessionId: string): Promise<FoundryChatSessionDetailView> {
@@ -280,6 +449,46 @@ export class FoundryAppService {
     return toChatSessionDetailView(chatSession);
   }
 
+  async createTranscriptSession(modelId: string): Promise<FoundryTranscriptSessionDetailView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const model = await this.manager.catalog.getModelVariant(modelId);
+
+    if (!model.isCached) {
+      throw new Error('Only downloaded models can be used for transcript sessions.');
+    }
+
+    if (!supportsLiveTranscription(model)) {
+      throw new Error('Only audio transcription models can be used for transcript sessions.');
+    }
+
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+    const now = new Date().toISOString();
+    const transcriptSession: StoredTranscriptSession = {
+      id: randomUUID(),
+      title: buildTranscriptSessionTitle(model.info.displayName ?? model.info.name),
+      modelId: model.id,
+      modelName: model.info.displayName ?? model.info.name,
+      modelAlias: model.alias,
+      createdAt: now,
+      updatedAt: now,
+      entries: []
+    };
+
+    this.transcriptSessionsState = {
+      activeSessionId: transcriptSession.id,
+      sessions: [transcriptSession, ...transcriptSessionsState.sessions]
+    };
+
+    await this.persistTranscriptSessionsState();
+
+    return toTranscriptSessionDetailView(transcriptSession, false);
+  }
+
   async updateChatSessionModel(sessionId: string, modelId: string): Promise<FoundryChatSessionDetailView> {
     await this.initialize();
 
@@ -327,6 +536,55 @@ export class FoundryAppService {
     return toChatSessionDetailView(chatSession);
   }
 
+  async updateTranscriptSessionModel(sessionId: string, modelId: string): Promise<FoundryTranscriptSessionDetailView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+    const sessionIndex = transcriptSessionsState.sessions.findIndex((session) => session.id === sessionId);
+
+    if (sessionIndex === -1) {
+      throw new Error('Transcript session not found.');
+    }
+
+    const transcriptSession = transcriptSessionsState.sessions[sessionIndex];
+
+    if (transcriptSession.entries.length > 0) {
+      throw new Error('Only empty sessions can change models.');
+    }
+
+    if (this.activeTranscriptRuntime?.sessionId === transcriptSession.id) {
+      throw new Error('Stop the live transcription before changing models.');
+    }
+
+    if (await this.isAnyModelLoaded()) {
+      throw new Error('Unload the currently loaded model before changing session models.');
+    }
+
+    const model = await this.manager.catalog.getModelVariant(modelId);
+
+    if (!model.isCached) {
+      throw new Error('Only downloaded models can be used for transcript sessions.');
+    }
+
+    if (!supportsLiveTranscription(model)) {
+      throw new Error('Only audio transcription models can be used for transcript sessions.');
+    }
+
+    transcriptSession.modelId = model.id;
+    transcriptSession.modelName = model.info.displayName ?? model.info.name;
+    transcriptSession.modelAlias = model.alias;
+    transcriptSession.title = buildTranscriptSessionTitle(transcriptSession.modelName);
+    transcriptSession.updatedAt = new Date().toISOString();
+
+    await this.persistTranscriptSessionsState();
+
+    return toTranscriptSessionDetailView(transcriptSession, false);
+  }
+
   async deleteChatSession(sessionId: string): Promise<FoundryChatView> {
     await this.initialize();
 
@@ -343,6 +601,29 @@ export class FoundryAppService {
     return {
       sessions: await this.toChatSessionViews(nextSessions),
       activeSessionId: this.chatSessionsState.activeSessionId
+    };
+  }
+
+  async deleteTranscriptSession(sessionId: string): Promise<FoundryTranscriptView> {
+    await this.initialize();
+
+    if (this.activeTranscriptRuntime?.sessionId === sessionId) {
+      await this.stopTranscriptSession(sessionId);
+    }
+
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+    const nextSessions = transcriptSessionsState.sessions.filter((session) => session.id !== sessionId);
+
+    this.transcriptSessionsState = {
+      activeSessionId: transcriptSessionsState.activeSessionId === sessionId ? nextSessions[0]?.id ?? null : transcriptSessionsState.activeSessionId,
+      sessions: nextSessions
+    };
+
+    await this.persistTranscriptSessionsState();
+
+    return {
+      sessions: await this.toTranscriptSessionViews(nextSessions),
+      activeSessionId: this.transcriptSessionsState.activeSessionId
     };
   }
 
@@ -369,6 +650,29 @@ export class FoundryAppService {
     return this.getChatSessions();
   }
 
+  async loadTranscriptSessionModel(sessionId: string): Promise<FoundryTranscriptView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const transcriptSession = await this.requireStoredTranscriptSession(sessionId);
+    const model = await this.manager.catalog.getModelVariant(transcriptSession.modelId);
+
+    if (!model.isCached) {
+      throw new Error(`The model for this session is no longer downloaded: ${transcriptSession.modelName}.`);
+    }
+
+    if (!(await model.isLoaded())) {
+      await model.load();
+    }
+
+    await this.getAppState();
+
+    return this.getTranscriptSessions();
+  }
+
   async unloadChatSessionModel(sessionId: string): Promise<FoundryChatView> {
     await this.initialize();
 
@@ -388,6 +692,30 @@ export class FoundryAppService {
     await this.getAppState();
 
     return this.getChatSessions();
+  }
+
+  async unloadTranscriptSessionModel(sessionId: string): Promise<FoundryTranscriptView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    const transcriptSession = await this.requireStoredTranscriptSession(sessionId);
+
+    if (this.activeTranscriptRuntime?.sessionId === transcriptSession.id) {
+      await this.stopTranscriptSession(sessionId);
+    }
+
+    const model = await this.manager.catalog.getModelVariant(transcriptSession.modelId);
+
+    if (await model.isLoaded()) {
+      await model.unload();
+    }
+
+    await this.getAppState();
+
+    return this.getTranscriptSessions();
   }
 
   async sendChatMessage(sessionId: string, message: string): Promise<FoundryChatSendResultView> {
@@ -547,6 +875,133 @@ export class FoundryAppService {
     }
   }
 
+  async startTranscriptSession(sessionId: string): Promise<FoundryTranscriptSessionDetailView> {
+    await this.initialize();
+
+    if (!this.manager) {
+      throw new Error('Foundry Local manager is unavailable.');
+    }
+
+    if (this.activeTranscriptRuntime) {
+      if (this.activeTranscriptRuntime.sessionId === sessionId) {
+        const currentSession = await this.requireStoredTranscriptSession(sessionId);
+        return toTranscriptSessionDetailView(currentSession, true);
+      }
+
+      throw new Error('Only one live transcription session can run at a time.');
+    }
+
+    const transcriptSession = await this.requireStoredTranscriptSession(sessionId);
+    const model = await this.manager.catalog.getModelVariant(transcriptSession.modelId);
+
+    if (!model.isCached) {
+      throw new Error(`The model for this session is no longer downloaded: ${transcriptSession.modelName}.`);
+    }
+
+    if (!supportsLiveTranscription(model)) {
+      throw new Error(`The selected model does not support live transcription: ${transcriptSession.modelName}.`);
+    }
+
+    if (!(await model.isLoaded())) {
+      throw new Error(`Load ${transcriptSession.modelName} before starting transcription in this session.`);
+    }
+
+    const audioSettings = await this.readAudioSettings();
+    const naudiodon = await this.importNaudiodon();
+    const audioClient = (model as IModel & { createAudioClient(): AudioClientLike }).createAudioClient();
+
+    if (audioClient.settings) {
+      audioClient.settings.language = audioSettings.language || undefined;
+    }
+
+    const liveSession = audioClient.createLiveTranscriptionSession();
+    liveSession.settings.sampleRate = audioSettings.sampleRate;
+    liveSession.settings.channels = audioSettings.channels;
+    liveSession.settings.bitsPerSample = audioSettings.bitsPerSample;
+    liveSession.settings.language = audioSettings.language || undefined;
+
+    const sampleFormat = audioSettings.bitsPerSample === 16 ? naudiodon.SampleFormat16Bit : naudiodon.SampleFormat32Bit;
+    const audioInput = naudiodon.AudioIO({
+      inOptions: {
+        deviceId: audioSettings.selectedInputDeviceId ?? undefined,
+        channelCount: audioSettings.channels,
+        sampleFormat,
+        sampleRate: audioSettings.sampleRate,
+        framesPerBuffer: Math.max(1, Math.floor(audioSettings.sampleRate / 5)),
+        maxQueue: 64,
+        closeOnError: true
+      }
+    });
+
+    const runtime: ActiveTranscriptRuntime = {
+      sessionId: transcriptSession.id,
+      modelId: transcriptSession.modelId,
+      session: liveSession,
+      audioInput,
+      previewText: '',
+      appendQueue: [],
+      pumpError: null,
+      pumping: false,
+      stopRequested: false,
+      lifecyclePromise: null,
+      stopPromise: null
+    };
+
+    this.activeTranscriptRuntime = runtime;
+    this.emitTranscriptStreamEvent({
+      type: 'transcription-started',
+      sessionId: transcriptSession.id
+    });
+
+    audioInput.on('data', (buffer: Buffer) => {
+      if (this.activeTranscriptRuntime !== runtime || runtime.stopRequested) {
+        return;
+      }
+
+      const copy = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength).slice();
+
+      if (runtime.appendQueue.length >= 100) {
+        runtime.appendQueue.shift();
+      }
+
+      runtime.appendQueue.push(copy);
+      void this.pumpTranscriptAudio(runtime);
+    });
+
+    audioInput.on('error', (error: unknown) => {
+      runtime.pumpError = error;
+      void this.failTranscriptRuntime(runtime, error instanceof Error ? error.message : 'Audio capture failed.');
+    });
+
+    await liveSession.start();
+    audioInput.start();
+
+    runtime.lifecyclePromise = this.consumeTranscriptStream(runtime);
+
+    return toTranscriptSessionDetailView(transcriptSession, true);
+  }
+
+  async stopTranscriptSession(sessionId: string): Promise<FoundryTranscriptSessionDetailView> {
+    await this.initialize();
+
+    const transcriptSession = await this.requireStoredTranscriptSession(sessionId);
+    const runtime = this.activeTranscriptRuntime;
+
+    if (!runtime || runtime.sessionId !== sessionId) {
+      return toTranscriptSessionDetailView(transcriptSession, false);
+    }
+
+    if (!runtime.stopPromise) {
+      runtime.stopRequested = true;
+      runtime.stopPromise = this.stopTranscriptRuntime(runtime);
+    }
+
+    await runtime.stopPromise;
+
+    const nextSession = await this.requireStoredTranscriptSession(sessionId);
+    return toTranscriptSessionDetailView(nextSession, false);
+  }
+
   async mutateCatalogModel(modelId: string, action: FoundryCatalogAction): Promise<FoundryCatalogView> {
     await this.initialize();
 
@@ -598,6 +1053,14 @@ export class FoundryAppService {
 
     return () => {
       this.chatStreamListeners.delete(listener);
+    };
+  }
+
+  subscribeToTranscriptStream(listener: (event: FoundryTranscriptStreamEvent) => void): () => void {
+    this.transcriptStreamListeners.add(listener);
+
+    return () => {
+      this.transcriptStreamListeners.delete(listener);
     };
   }
 
@@ -677,6 +1140,34 @@ export class FoundryAppService {
     return [...preferences.preferredExecutionProviders];
   }
 
+  private async readAudioSettings(): Promise<StoredAudioSettings> {
+    if (this.audioSettings) {
+      return this.audioSettings;
+    }
+
+    try {
+      const storedSettings = await readFile(this.getAudioSettingsFilePath(), 'utf8');
+      this.audioSettings = normalizeAudioSettings(JSON.parse(storedSettings) as Partial<StoredAudioSettings>);
+    } catch {
+      this.audioSettings = { ...defaultAudioSettings };
+    }
+
+    return this.audioSettings;
+  }
+
+  private async persistAudioSettings(): Promise<void> {
+    if (!this.audioSettings) {
+      return;
+    }
+
+    await mkdir(path.dirname(this.getAudioSettingsFilePath()), { recursive: true });
+    await writeFile(this.getAudioSettingsFilePath(), JSON.stringify(this.audioSettings, null, 2), 'utf8');
+  }
+
+  private getAudioSettingsFilePath(): string {
+    return path.join(app.getPath('userData'), audioSettingsFileName);
+  }
+
   private async readEpPreferences(): Promise<FoundryEpPreferences> {
     if (this.epPreferences) {
       return this.epPreferences;
@@ -747,6 +1238,31 @@ export class FoundryAppService {
     return this.chatSessionsState;
   }
 
+  private async readTranscriptSessionsState(): Promise<StoredTranscriptSessionsState> {
+    if (this.transcriptSessionsState) {
+      return this.transcriptSessionsState;
+    }
+
+    try {
+      const storedState = await readFile(this.getTranscriptSessionsFilePath(), 'utf8');
+      const parsedState = JSON.parse(storedState) as Partial<StoredTranscriptSessionsState>;
+
+      this.transcriptSessionsState = {
+        activeSessionId: typeof parsedState.activeSessionId === 'string' ? parsedState.activeSessionId : null,
+        sessions: Array.isArray(parsedState.sessions)
+          ? parsedState.sessions.filter(isStoredTranscriptSession)
+          : []
+      };
+    } catch {
+      this.transcriptSessionsState = {
+        activeSessionId: null,
+        sessions: []
+      };
+    }
+
+    return this.transcriptSessionsState;
+  }
+
   private async persistChatSessionsState(): Promise<void> {
     if (!this.chatSessionsState) {
       return;
@@ -756,8 +1272,21 @@ export class FoundryAppService {
     await writeFile(this.getChatSessionsFilePath(), JSON.stringify(this.chatSessionsState, null, 2), 'utf8');
   }
 
+  private async persistTranscriptSessionsState(): Promise<void> {
+    if (!this.transcriptSessionsState) {
+      return;
+    }
+
+    await mkdir(path.dirname(this.getTranscriptSessionsFilePath()), { recursive: true });
+    await writeFile(this.getTranscriptSessionsFilePath(), JSON.stringify(this.transcriptSessionsState, null, 2), 'utf8');
+  }
+
   private getChatSessionsFilePath(): string {
     return path.join(app.getPath('userData'), chatSessionsFileName);
+  }
+
+  private getTranscriptSessionsFilePath(): string {
+    return path.join(app.getPath('userData'), transcriptSessionsFileName);
   }
 
   private async requireChatSession(sessionId: string): Promise<StoredChatSession> {
@@ -785,6 +1314,31 @@ export class FoundryAppService {
     return chatSession;
   }
 
+  private async requireTranscriptSession(sessionId: string): Promise<StoredTranscriptSession> {
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+    const transcriptSession = transcriptSessionsState.sessions.find((session) => session.id === sessionId);
+
+    if (!transcriptSession) {
+      throw new Error('Transcript session not found.');
+    }
+
+    transcriptSessionsState.activeSessionId = transcriptSession.id;
+    await this.persistTranscriptSessionsState();
+
+    return transcriptSession;
+  }
+
+  private async requireStoredTranscriptSession(sessionId: string): Promise<StoredTranscriptSession> {
+    const transcriptSessionsState = await this.readTranscriptSessionsState();
+    const transcriptSession = transcriptSessionsState.sessions.find((session) => session.id === sessionId);
+
+    if (!transcriptSession) {
+      throw new Error('Transcript session not found.');
+    }
+
+    return transcriptSession;
+  }
+
   private async markSessionsForModelAsNeedingHydration(modelId: string): Promise<void> {
     const chatSessionsState = await this.readChatSessionsState();
     let didChange = false;
@@ -802,6 +1356,197 @@ export class FoundryAppService {
 
     if (didChange) {
       await this.persistChatSessionsState();
+    }
+  }
+
+  private async importNaudiodon(): Promise<NaudiodonModuleLike> {
+    const moduleValue = await import('naudiodon2');
+    const naudiodon = ('default' in moduleValue ? moduleValue.default : moduleValue) as Partial<NaudiodonModuleLike>;
+
+    if (!naudiodon || typeof naudiodon.AudioIO !== 'function' || typeof naudiodon.getDevices !== 'function') {
+      throw new Error('naudiodon2 is unavailable in the Electron main process.');
+    }
+
+    return naudiodon as NaudiodonModuleLike;
+  }
+
+  private async readAudioInputDevices(): Promise<FoundryAudioInputDeviceView[]> {
+    try {
+      const naudiodon = await this.importNaudiodon();
+
+      return naudiodon.getDevices()
+        .filter((device) => device.maxInputChannels > 0)
+        .map((device) => ({
+          id: device.id,
+          name: device.name,
+          hostApiName: device.hostAPIName,
+          maxInputChannels: device.maxInputChannels,
+          defaultSampleRate: device.defaultSampleRate
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async consumeTranscriptStream(runtime: ActiveTranscriptRuntime): Promise<void> {
+    try {
+      for await (const result of runtime.session.getStream()) {
+        if (this.activeTranscriptRuntime !== runtime) {
+          break;
+        }
+
+        const text = getTranscriptText(result);
+
+        if (!text) {
+          continue;
+        }
+
+        if (result.is_final) {
+          const finalText = mergeTranscriptPreview(runtime.previewText, text);
+          const transcriptSession = await this.requireStoredTranscriptSession(runtime.sessionId);
+          const entry: StoredTranscriptEntry = {
+            id: randomUUID(),
+            content: finalText,
+            createdAt: new Date().toISOString(),
+            startTime: typeof result.start_time === 'number' ? result.start_time : null,
+            endTime: typeof result.end_time === 'number' ? result.end_time : null
+          };
+
+          transcriptSession.entries.push(entry);
+          transcriptSession.updatedAt = entry.createdAt;
+
+          if (transcriptSession.entries.length === 1) {
+            transcriptSession.title = buildTranscriptSessionTitle(text);
+          }
+
+          await this.persistTranscriptSessionsState();
+          runtime.previewText = '';
+          this.emitTranscriptStreamEvent({
+            type: 'transcription-entry-committed',
+            sessionId: runtime.sessionId,
+            entry: { ...entry }
+          });
+          this.emitTranscriptStreamEvent({
+            type: 'transcription-preview-updated',
+            sessionId: runtime.sessionId,
+            preview: ''
+          });
+        } else {
+          runtime.previewText = mergeTranscriptPreview(runtime.previewText, text);
+          this.emitTranscriptStreamEvent({
+            type: 'transcription-preview-updated',
+            sessionId: runtime.sessionId,
+            preview: runtime.previewText
+          });
+        }
+      }
+    } catch (error) {
+      if (!runtime.stopRequested) {
+        await this.failTranscriptRuntime(runtime, error instanceof Error ? error.message : 'Transcription stream failed.');
+      }
+    }
+  }
+
+  private async pumpTranscriptAudio(runtime: ActiveTranscriptRuntime): Promise<void> {
+    if (runtime.pumping || runtime.stopRequested || this.activeTranscriptRuntime !== runtime) {
+      return;
+    }
+
+    runtime.pumping = true;
+
+    try {
+      while (runtime.appendQueue.length > 0 && !runtime.stopRequested && this.activeTranscriptRuntime === runtime) {
+        const pcm = runtime.appendQueue.shift();
+
+        if (!pcm) {
+          continue;
+        }
+
+        await runtime.session.append(pcm);
+      }
+    } catch (error) {
+      runtime.pumpError = error;
+      await this.failTranscriptRuntime(runtime, error instanceof Error ? error.message : 'Failed to append microphone audio.');
+    } finally {
+      runtime.pumping = false;
+
+      if (runtime.appendQueue.length > 0 && !runtime.stopRequested && this.activeTranscriptRuntime === runtime) {
+        void this.pumpTranscriptAudio(runtime);
+      }
+    }
+  }
+
+  private async failTranscriptRuntime(runtime: ActiveTranscriptRuntime, message: string): Promise<void> {
+    if (this.activeTranscriptRuntime !== runtime) {
+      return;
+    }
+
+    const transcriptSession = await this.requireStoredTranscriptSession(runtime.sessionId);
+    const failedEntry: StoredTranscriptEntry = {
+      id: randomUUID(),
+      content: message,
+      createdAt: new Date().toISOString(),
+      startTime: null,
+      endTime: null,
+      failed: true
+    };
+
+    transcriptSession.entries.push(failedEntry);
+    transcriptSession.updatedAt = failedEntry.createdAt;
+    await this.persistTranscriptSessionsState();
+    this.emitTranscriptStreamEvent({
+      type: 'transcription-failed',
+      sessionId: runtime.sessionId,
+      message
+    });
+
+    runtime.stopRequested = true;
+    runtime.stopPromise ??= this.stopTranscriptRuntime(runtime);
+    await runtime.stopPromise;
+  }
+
+  private async stopTranscriptRuntime(runtime: ActiveTranscriptRuntime): Promise<void> {
+    if (this.activeTranscriptRuntime !== runtime) {
+      return;
+    }
+
+    runtime.stopRequested = true;
+
+    try {
+      await new Promise<void>((resolve) => {
+        try {
+          runtime.audioInput.quit(resolve);
+        } catch {
+          resolve();
+        }
+      });
+
+      await runtime.session.stop();
+    } finally {
+      try {
+        await runtime.lifecyclePromise;
+      } catch {
+        // Stream cleanup errors are already surfaced via event emission.
+      }
+
+      try {
+        await runtime.session.dispose();
+      } catch {
+        // Dispose is best-effort during shutdown.
+      }
+
+      if (this.activeTranscriptRuntime === runtime) {
+        this.activeTranscriptRuntime = null;
+        this.emitTranscriptStreamEvent({
+          type: 'transcription-preview-updated',
+          sessionId: runtime.sessionId,
+          preview: ''
+        });
+        this.emitTranscriptStreamEvent({
+          type: 'transcription-stopped',
+          sessionId: runtime.sessionId
+        });
+      }
     }
   }
 
@@ -842,12 +1587,21 @@ export class FoundryAppService {
       downloaded: model.isCached,
       loaded: await model.isLoaded(),
       supportsTextChat: supportsTextChat(model),
+      supportsLiveTranscription: supportsLiveTranscription(model),
       supportsToolCalling: model.supportsToolCalling ?? false
     })));
   }
 
   private async toChatSessionViews(sessions: StoredChatSession[]): Promise<FoundryChatSessionView[]> {
     return Promise.all(sessions.map(async (chatSession) => toChatSessionView(chatSession, await this.isSessionModelLoaded(chatSession.modelId))));
+  }
+
+  private async toTranscriptSessionViews(sessions: StoredTranscriptSession[]): Promise<FoundryTranscriptSessionView[]> {
+    return Promise.all(sessions.map(async (transcriptSession) => toTranscriptSessionView(
+      transcriptSession,
+      await this.isSessionModelLoaded(transcriptSession.modelId),
+      this.activeTranscriptRuntime?.sessionId === transcriptSession.id
+    )));
   }
 
   private async isSessionModelLoaded(modelId: string): Promise<boolean> {
@@ -891,6 +1645,12 @@ export class FoundryAppService {
     }
   }
 
+  private emitTranscriptStreamEvent(event: FoundryTranscriptStreamEvent): void {
+    for (const listener of this.transcriptStreamListeners) {
+      listener(event);
+    }
+  }
+
   private readRuntimeView(): FoundryRuntimeView {
     if (!this.manager) {
       return {
@@ -930,10 +1690,32 @@ function toChatSessionView(chatSession: StoredChatSession, modelLoaded: boolean)
   };
 }
 
+function toTranscriptSessionView(transcriptSession: StoredTranscriptSession, modelLoaded: boolean, isTranscribing: boolean): FoundryTranscriptSessionView {
+  return {
+    id: transcriptSession.id,
+    title: transcriptSession.title,
+    modelId: transcriptSession.modelId,
+    modelName: transcriptSession.modelName,
+    modelAlias: transcriptSession.modelAlias,
+    createdAt: transcriptSession.createdAt,
+    updatedAt: transcriptSession.updatedAt,
+    entryCount: transcriptSession.entries.length,
+    modelLoaded,
+    isTranscribing
+  };
+}
+
 function toChatSessionDetailView(chatSession: StoredChatSession): FoundryChatSessionDetailView {
   return {
     session: toChatSessionView(chatSession, false),
     messages: chatSession.messages.map((message) => ({ ...message }))
+  };
+}
+
+function toTranscriptSessionDetailView(transcriptSession: StoredTranscriptSession, isTranscribing: boolean): FoundryTranscriptSessionDetailView {
+  return {
+    session: toTranscriptSessionView(transcriptSession, false, isTranscribing),
+    entries: transcriptSession.entries.map((entry) => ({ ...entry }))
   };
 }
 
@@ -942,6 +1724,16 @@ function buildChatSessionTitle(value: string): string {
 
   if (!normalizedValue) {
     return 'New chat';
+  }
+
+  return normalizedValue.length > 48 ? `${normalizedValue.slice(0, 48).trimEnd()}...` : normalizedValue;
+}
+
+function buildTranscriptSessionTitle(value: string): string {
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue) {
+    return 'New transcript';
   }
 
   return normalizedValue.length > 48 ? `${normalizedValue.slice(0, 48).trimEnd()}...` : normalizedValue;
@@ -982,6 +1774,24 @@ function isStoredChatSession(value: unknown): value is StoredChatSession {
     && candidate.messages.every(isStoredChatMessage);
 }
 
+function isStoredTranscriptSession(value: unknown): value is StoredTranscriptSession {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<StoredTranscriptSession>;
+
+  return typeof candidate.id === 'string'
+    && typeof candidate.title === 'string'
+    && typeof candidate.modelId === 'string'
+    && typeof candidate.modelName === 'string'
+    && typeof candidate.modelAlias === 'string'
+    && typeof candidate.createdAt === 'string'
+    && typeof candidate.updatedAt === 'string'
+    && Array.isArray(candidate.entries)
+    && candidate.entries.every(isStoredTranscriptEntry);
+}
+
 function isStoredChatMessage(value: unknown): value is FoundryChatMessageView {
   if (!value || typeof value !== 'object') {
     return false;
@@ -993,6 +1803,21 @@ function isStoredChatMessage(value: unknown): value is FoundryChatMessageView {
     && (candidate.role === 'user' || candidate.role === 'assistant')
     && typeof candidate.content === 'string'
     && typeof candidate.createdAt === 'string'
+    && (candidate.failed === undefined || typeof candidate.failed === 'boolean');
+}
+
+function isStoredTranscriptEntry(value: unknown): value is StoredTranscriptEntry {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<StoredTranscriptEntry>;
+
+  return typeof candidate.id === 'string'
+    && typeof candidate.content === 'string'
+    && typeof candidate.createdAt === 'string'
+    && (typeof candidate.startTime === 'number' || candidate.startTime === null)
+    && (typeof candidate.endTime === 'number' || candidate.endTime === null)
     && (candidate.failed === undefined || typeof candidate.failed === 'boolean');
 }
 
@@ -1013,6 +1838,53 @@ function splitModalities(value: string | null): string[] {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
 }
 
+function getTranscriptText(result: LiveTranscriptionResult): string {
+  const firstPart = result.content?.[0];
+  const value = firstPart?.text ?? firstPart?.transcript ?? '';
+
+  return value.trim();
+}
+
+function mergeTranscriptPreview(currentValue: string, nextValue: string): string {
+  const trimmedCurrentValue = currentValue.trim();
+  const trimmedNextValue = nextValue.trim();
+
+  if (!trimmedCurrentValue) {
+    return trimmedNextValue;
+  }
+
+  if (!trimmedNextValue) {
+    return trimmedCurrentValue;
+  }
+
+  if (trimmedNextValue.startsWith(trimmedCurrentValue)) {
+    return trimmedNextValue;
+  }
+
+  if (trimmedCurrentValue.endsWith(trimmedNextValue)) {
+    return trimmedCurrentValue;
+  }
+
+  return `${trimmedCurrentValue} ${trimmedNextValue}`.trim();
+}
+
+function normalizeAudioSettings(value: Partial<StoredAudioSettings> | FoundryAudioSettingsInput): StoredAudioSettings {
+  const sampleRate = typeof value.sampleRate === 'number' && Number.isFinite(value.sampleRate) ? Math.max(8000, Math.round(value.sampleRate)) : defaultAudioSettings.sampleRate;
+  const channels = typeof value.channels === 'number' && Number.isFinite(value.channels) ? Math.max(1, Math.round(value.channels)) : defaultAudioSettings.channels;
+  const bitsPerSample = value.bitsPerSample === 32 ? 32 : 16;
+  const language = typeof value.language === 'string' ? value.language.trim() : defaultAudioSettings.language;
+
+  return {
+    selectedInputDeviceId: typeof value.selectedInputDeviceId === 'number' && Number.isInteger(value.selectedInputDeviceId)
+      ? value.selectedInputDeviceId
+      : null,
+    sampleRate,
+    channels,
+    bitsPerSample,
+    language
+  };
+}
+
 function supportsTextChat(model: IModel): boolean {
   const task = (model.info.task ?? '').toLowerCase();
   const modelType = (model.info.modelType ?? '').toLowerCase();
@@ -1031,6 +1903,25 @@ function supportsTextChat(model: IModel): boolean {
     || capabilities.includes('text');
 
   return supportsTextInput && supportsTextOutput && looksLikeChatModel;
+}
+
+function supportsLiveTranscription(model: IModel): boolean {
+  const task = (model.info.task ?? '').toLowerCase();
+  const modelType = (model.info.modelType ?? '').toLowerCase();
+  const capabilities = (model.capabilities ?? '').toLowerCase();
+  const inputModalities = splitModalities(model.inputModalities).map((value) => value.toLowerCase());
+  const outputModalities = splitModalities(model.outputModalities).map((value) => value.toLowerCase());
+
+  const supportsAudioInput = inputModalities.includes('audio');
+  const supportsTextOutput = outputModalities.includes('text') || outputModalities.includes('transcript');
+  const looksLikeTranscriptionModel = task.includes('transcrib')
+    || task.includes('speech')
+    || modelType.includes('speech')
+    || modelType.includes('audio')
+    || capabilities.includes('speech')
+    || capabilities.includes('transcrib');
+
+  return supportsAudioInput && supportsTextOutput && looksLikeTranscriptionModel;
 }
 
 export const foundryAppService = new FoundryAppService();

@@ -2,13 +2,14 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { foundryAppService } from './main/foundry-app-service.js';
-import type { FoundryChatStreamEvent, FoundryDownloadProgressEvent, FoundryEpDownloadProgressEvent } from './shared/foundry-state.js';
+import type { FoundryChatStreamEvent, FoundryDownloadProgressEvent, FoundryEpDownloadProgressEvent, FoundryTranscriptStreamEvent } from './shared/foundry-state.js';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 let unsubscribeFromDownloadProgress: (() => void) | null = null;
 let unsubscribeFromEpDownloadProgress: (() => void) | null = null;
 let unsubscribeFromChatStream: (() => void) | null = null;
+let unsubscribeFromTranscriptStream: (() => void) | null = null;
 
 const createWindow = (): void => {
   const window = new BrowserWindow({
@@ -41,6 +42,11 @@ app.whenReady().then(() => {
       window.webContents.send('foundry-local-app:chat-stream-event', streamEvent);
     }
   });
+  unsubscribeFromTranscriptStream = foundryAppService.subscribeToTranscriptStream((streamEvent: FoundryTranscriptStreamEvent) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send('foundry-local-app:transcript-stream-event', streamEvent);
+    }
+  });
 
   ipcMain.handle('foundry-local-app:get-app-state', () => foundryAppService.getAppState());
   ipcMain.handle('foundry-local-app:get-catalog', () => foundryAppService.getCatalog());
@@ -50,6 +56,8 @@ app.whenReady().then(() => {
   ipcMain.handle('foundry-local-app:start-web-service', () => foundryAppService.startWebService());
   ipcMain.handle('foundry-local-app:stop-web-service', () => foundryAppService.stopWebService());
   ipcMain.handle('foundry-local-app:register-execution-providers', (_event, epNames?: string[]) => foundryAppService.registerExecutionProviders(epNames));
+  ipcMain.handle('foundry-local-app:get-audio-settings', () => foundryAppService.getAudioSettings());
+  ipcMain.handle('foundry-local-app:update-audio-settings', (_event, settings) => foundryAppService.updateAudioSettings(settings));
   ipcMain.handle('foundry-local-app:get-chat-sessions', () => foundryAppService.getChatSessions());
   ipcMain.handle('foundry-local-app:get-chat-session', (_event, sessionId: string) => foundryAppService.getChatSession(sessionId));
   ipcMain.handle('foundry-local-app:create-chat-session', (_event, modelId: string) => foundryAppService.createChatSession(modelId));
@@ -58,6 +66,15 @@ app.whenReady().then(() => {
   ipcMain.handle('foundry-local-app:load-chat-session-model', (_event, sessionId: string) => foundryAppService.loadChatSessionModel(sessionId));
   ipcMain.handle('foundry-local-app:unload-chat-session-model', (_event, sessionId: string) => foundryAppService.unloadChatSessionModel(sessionId));
   ipcMain.handle('foundry-local-app:send-chat-message', (_event, sessionId: string, message: string) => foundryAppService.sendChatMessage(sessionId, message));
+  ipcMain.handle('foundry-local-app:get-transcript-sessions', () => foundryAppService.getTranscriptSessions());
+  ipcMain.handle('foundry-local-app:get-transcript-session', (_event, sessionId: string) => foundryAppService.getTranscriptSession(sessionId));
+  ipcMain.handle('foundry-local-app:create-transcript-session', (_event, modelId: string) => foundryAppService.createTranscriptSession(modelId));
+  ipcMain.handle('foundry-local-app:update-transcript-session-model', (_event, sessionId: string, modelId: string) => foundryAppService.updateTranscriptSessionModel(sessionId, modelId));
+  ipcMain.handle('foundry-local-app:delete-transcript-session', (_event, sessionId: string) => foundryAppService.deleteTranscriptSession(sessionId));
+  ipcMain.handle('foundry-local-app:load-transcript-session-model', (_event, sessionId: string) => foundryAppService.loadTranscriptSessionModel(sessionId));
+  ipcMain.handle('foundry-local-app:unload-transcript-session-model', (_event, sessionId: string) => foundryAppService.unloadTranscriptSessionModel(sessionId));
+  ipcMain.handle('foundry-local-app:start-transcript-session', (_event, sessionId: string) => foundryAppService.startTranscriptSession(sessionId));
+  ipcMain.handle('foundry-local-app:stop-transcript-session', (_event, sessionId: string) => foundryAppService.stopTranscriptSession(sessionId));
 
   createWindow();
 
@@ -83,6 +100,8 @@ app.on('will-quit', () => {
   ipcMain.removeHandler('foundry-local-app:start-web-service');
   ipcMain.removeHandler('foundry-local-app:stop-web-service');
   ipcMain.removeHandler('foundry-local-app:register-execution-providers');
+  ipcMain.removeHandler('foundry-local-app:get-audio-settings');
+  ipcMain.removeHandler('foundry-local-app:update-audio-settings');
   ipcMain.removeHandler('foundry-local-app:get-chat-sessions');
   ipcMain.removeHandler('foundry-local-app:get-chat-session');
   ipcMain.removeHandler('foundry-local-app:create-chat-session');
@@ -91,7 +110,17 @@ app.on('will-quit', () => {
   ipcMain.removeHandler('foundry-local-app:load-chat-session-model');
   ipcMain.removeHandler('foundry-local-app:unload-chat-session-model');
   ipcMain.removeHandler('foundry-local-app:send-chat-message');
+  ipcMain.removeHandler('foundry-local-app:get-transcript-sessions');
+  ipcMain.removeHandler('foundry-local-app:get-transcript-session');
+  ipcMain.removeHandler('foundry-local-app:create-transcript-session');
+  ipcMain.removeHandler('foundry-local-app:update-transcript-session-model');
+  ipcMain.removeHandler('foundry-local-app:delete-transcript-session');
+  ipcMain.removeHandler('foundry-local-app:load-transcript-session-model');
+  ipcMain.removeHandler('foundry-local-app:unload-transcript-session-model');
+  ipcMain.removeHandler('foundry-local-app:start-transcript-session');
+  ipcMain.removeHandler('foundry-local-app:stop-transcript-session');
   unsubscribeFromDownloadProgress?.();
   unsubscribeFromEpDownloadProgress?.();
   unsubscribeFromChatStream?.();
+  unsubscribeFromTranscriptStream?.();
 });

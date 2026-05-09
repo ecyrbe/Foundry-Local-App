@@ -3,17 +3,21 @@ import { useTheme, type ThemePreference } from '@/components/theme-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import type { FoundryRuntimeView } from '../../shared/foundry-state.js';
+import type { FoundryAudioSettingsInput, FoundryAudioSettingsView, FoundryRuntimeView } from '../../shared/foundry-state.js';
 import { CatalogButton, panelSurfaceClassName } from './shared';
 
 function SettingsRuntimePage(props: {
+  audioSettings: FoundryAudioSettingsView;
   epProgressByName: Record<string, number>;
   isCatalogOpen: boolean;
+  isSavingAudioSettings: boolean;
   isRegisteringEps: boolean;
   isRefreshing: boolean;
   isTogglingWebService: boolean;
   onOpenCatalog: () => void;
+  onSaveAudioSettings: (settings: FoundryAudioSettingsInput) => Promise<void>;
   onRefresh: () => Promise<void>;
   onRegisterEp: (epName?: string) => Promise<void>;
   onToggleWebService: () => Promise<void>;
@@ -41,6 +45,18 @@ function SettingsRuntimePage(props: {
       icon: Moon
     }
   ];
+  const selectedDeviceValue = props.audioSettings.selectedInputDeviceId === null ? 'default' : String(props.audioSettings.selectedInputDeviceId);
+
+  const updateAudioSettings = (partial: Partial<FoundryAudioSettingsInput>) => {
+    void props.onSaveAudioSettings({
+      selectedInputDeviceId: props.audioSettings.selectedInputDeviceId,
+      sampleRate: props.audioSettings.sampleRate,
+      channels: props.audioSettings.channels,
+      bitsPerSample: props.audioSettings.bitsPerSample,
+      language: props.audioSettings.language,
+      ...partial
+    });
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col gap-4 overflow-auto px-4 py-4 sm:px-6 sm:py-5">
@@ -88,6 +104,98 @@ function SettingsRuntimePage(props: {
                 </Button>
               );
             })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className={panelSurfaceClassName}>
+        <CardHeader>
+          <CardTitle>Audio</CardTitle>
+          <CardDescription>Choose the microphone and capture format used for live transcription sessions.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="audio-input-device">Input device</label>
+            <select
+              id="audio-input-device"
+              value={selectedDeviceValue}
+              disabled={props.isSavingAudioSettings}
+              className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              onChange={(event) => {
+                updateAudioSettings({
+                  selectedInputDeviceId: event.target.value === 'default' ? null : Number(event.target.value)
+                });
+              }}
+            >
+              <option value="default">System default input</option>
+              {props.audioSettings.availableInputDevices.map((device) => (
+                <option key={device.id} value={String(device.id)}>
+                  {device.name} ({device.hostApiName})
+                </option>
+              ))}
+            </select>
+            {props.audioSettings.deviceAccessError ? <p className="text-xs text-destructive">{props.audioSettings.deviceAccessError}</p> : <p className="text-xs text-muted-foreground">Available devices are discovered in the Electron main process with `naudiodon2`.</p>}
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="audio-language">Language hint</label>
+            <Input
+              id="audio-language"
+              value={props.audioSettings.language}
+              disabled={props.isSavingAudioSettings}
+              placeholder="en"
+              onChange={(event) => {
+                updateAudioSettings({ language: event.target.value });
+              }}
+            />
+            <p className="text-xs text-muted-foreground">Optional BCP-47 hint such as `en` or `fr`.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="audio-sample-rate">Sample rate</label>
+            <Input
+              id="audio-sample-rate"
+              type="number"
+              min={8000}
+              step={1000}
+              value={props.audioSettings.sampleRate}
+              disabled={props.isSavingAudioSettings}
+              onChange={(event) => {
+                updateAudioSettings({ sampleRate: Number(event.target.value) || props.audioSettings.sampleRate });
+              }}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="audio-channels">Channels</label>
+            <Input
+              id="audio-channels"
+              type="number"
+              min={1}
+              max={2}
+              step={1}
+              value={props.audioSettings.channels}
+              disabled={props.isSavingAudioSettings}
+              onChange={(event) => {
+                updateAudioSettings({ channels: Number(event.target.value) || props.audioSettings.channels });
+              }}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="audio-bits-per-sample">Bits per sample</label>
+            <select
+              id="audio-bits-per-sample"
+              value={String(props.audioSettings.bitsPerSample)}
+              disabled={props.isSavingAudioSettings}
+              className="flex h-10 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              onChange={(event) => {
+                updateAudioSettings({ bitsPerSample: event.target.value === '32' ? 32 : 16 });
+              }}
+            >
+              <option value="16">16-bit PCM</option>
+              <option value="32">32-bit PCM</option>
+            </select>
           </div>
         </CardContent>
       </Card>

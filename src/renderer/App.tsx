@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Ellipsis, LoaderCircle, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Plus, Settings, Trash2, XCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Ellipsis, LoaderCircle, MessageSquare, Mic, PanelLeftClose, PanelLeftOpen, Play, Plus, Settings, Trash2, XCircle } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { StatusBar, StatusBarContent } from '@/components/ui/status-bar';
 import { cn } from '@/lib/utils';
 import type {
   FoundryAppState,
+  FoundryAudioSettingsInput,
+  FoundryAudioSettingsView,
   FoundryCatalogAction,
   FoundryCatalogModelView,
   FoundryChatMessageView,
@@ -15,12 +18,16 @@ import type {
   FoundryChatStreamEvent,
   FoundryDownloadProgressEvent,
   FoundryEpDownloadProgressEvent,
-  FoundryRuntimeView
+  FoundryRuntimeView,
+  FoundryTranscriptSessionDetailView,
+  FoundryTranscriptSessionView,
+  FoundryTranscriptStreamEvent
 } from '../shared/foundry-state.js';
 import { CatalogPage } from './pages/catalog-page';
 import { ChatPage } from './pages/chat-page';
 import { SettingsRuntimePage } from './pages/settings-runtime-page';
 import { formatTimestamp } from './pages/shared';
+import { TranscriptPage } from './pages/transcript-page';
 
 const loadingState: FoundryAppState = {
   bootstrapStage: 'starting',
@@ -30,6 +37,16 @@ const loadingState: FoundryAppState = {
   startupConfigSummary: 'Loading startup configuration...',
   webServiceUrls: [],
   lastError: null
+};
+
+const emptyAudioSettings: FoundryAudioSettingsView = {
+  selectedInputDeviceId: null,
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  language: 'en',
+  availableInputDevices: [],
+  deviceAccessError: null
 };
 
 function getStatusTone(value: 'ready' | 'failed' | 'running' | 'stopped' | 'initializing' | 'starting'): string {
@@ -52,14 +69,26 @@ function StatusPill(props: { label: string; value: string; tone: 'ready' | 'fail
   );
 }
 
-function SessionMenu(props: {
+type SidebarSession = {
+  id: string;
+  title: string;
+  modelId: string;
+  modelName: string;
+  updatedAt: string;
+  detailCountLabel: string;
+  modelLoaded: boolean;
+  isLive: boolean;
+  icon: 'chat' | 'transcript';
+};
+
+function SidebarSessionMenu(props: {
   deletingSessionId: string | null;
   isOpen: boolean;
   onClose: () => void;
   onDeleteSession: (sessionId: string) => Promise<void>;
   onLoadSessionModel: (sessionId: string) => Promise<void>;
   onUnloadSessionModel: (sessionId: string) => Promise<void>;
-  session: FoundryChatSessionView;
+  session: SidebarSession;
   sessionAction?: 'loading' | 'unloading';
 }) {
   return props.isOpen ? (
@@ -92,20 +121,24 @@ function SessionMenu(props: {
   ) : null;
 }
 
-function ChatSidebar(props: {
+function HistoryGroup(props: {
   activeSessionId: string | null;
+  collapsed: boolean;
+  contentClassName?: string;
   deletingSessionId: string | null;
-  isCollapsed: boolean;
+  emptyLabel: string;
+  icon: 'chat' | 'transcript';
   isCreatingSession: boolean;
+  itemClassName?: string;
+  label: string;
   modelActionByModelId: Record<string, 'loading' | 'unloading'>;
   onCreateSession: () => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
   onLoadSessionModel: (sessionId: string) => Promise<void>;
-  onNavigateSystem: () => void;
   onOpenSession: (sessionId: string) => Promise<void>;
-  onToggleCollapse: () => void;
   onUnloadSessionModel: (sessionId: string) => Promise<void>;
-  sessions: FoundryChatSessionView[];
+  sessions: SidebarSession[];
+  value: string;
 }) {
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
 
@@ -114,6 +147,168 @@ function ChatSidebar(props: {
       setMenuSessionId(null);
     }
   }, [menuSessionId, props.sessions]);
+
+  const Icon = props.icon === 'chat' ? MessageSquare : Mic;
+  const content = (
+    <div className="space-y-2">
+      {props.sessions.length > 0 ? props.sessions.map((session) => {
+        const isActive = props.activeSessionId === session.id;
+        const sessionAction = props.modelActionByModelId[session.modelId];
+        const SessionIcon = session.icon === 'chat' ? MessageSquare : Mic;
+
+        return (
+          <div key={session.id} className="relative">
+            <button
+              type="button"
+              className={cn(
+                'flex w-full min-w-0 items-start gap-3 rounded-2xl px-3 py-3 text-left transition-colors',
+                isActive ? 'bg-secondary text-secondary-foreground' : 'hover:bg-accent/70'
+              )}
+              onClick={() => {
+                setMenuSessionId(null);
+                void props.onOpenSession(session.id);
+              }}
+              title={props.collapsed ? session.title : undefined}
+            >
+              <SessionIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              {!props.collapsed ? (
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{session.title}</p>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{session.modelName}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-md p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground"
+                      aria-label="Open session menu"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuSessionId((currentValue) => currentValue === session.id ? null : session.id);
+                      }}
+                    >
+                      <Ellipsis className="size-4" />
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>{session.detailCountLabel}</span>
+                    <span>{formatTimestamp(session.updatedAt)}</span>
+                    {session.isLive ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">Live</span> : null}
+                    <span className={cn('h-2 w-2 rounded-full', sessionAction ? 'bg-amber-500' : session.modelLoaded ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
+                  </div>
+                </div>
+              ) : null}
+            </button>
+            {!props.collapsed ? (
+              <SidebarSessionMenu
+                deletingSessionId={props.deletingSessionId}
+                isOpen={menuSessionId === session.id}
+                onClose={() => {
+                  setMenuSessionId(null);
+                }}
+                onDeleteSession={props.onDeleteSession}
+                onLoadSessionModel={props.onLoadSessionModel}
+                onUnloadSessionModel={props.onUnloadSessionModel}
+                session={session}
+                sessionAction={sessionAction}
+              />
+            ) : null}
+          </div>
+        );
+      }) : (
+        <div className={cn(
+          'rounded-2xl border border-dashed border-border/70 bg-background/20 px-4 py-8 text-center',
+          props.collapsed ? 'px-2' : ''
+        )}>
+          {!props.collapsed ? <p className="text-sm text-muted-foreground">{props.emptyLabel}</p> : <Icon className="mx-auto size-4 text-muted-foreground" />}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <AccordionItem value={props.value} className={cn('space-y-2', props.itemClassName)}>
+      <div className={cn('flex items-center gap-2', props.collapsed ? 'justify-center' : 'justify-between')}>
+        <AccordionTrigger
+          className={cn(
+            'flex min-w-0 items-center gap-2 rounded-xl px-2 py-2 text-left text-sm font-medium transition-colors hover:bg-accent/70',
+            props.collapsed ? 'justify-center px-0' : 'flex-1'
+          )}
+          title={props.collapsed ? props.label : undefined}
+        >
+          {!props.collapsed ? (
+            <div className="text-muted-foreground">
+              <ChevronRight className="size-4 data-[state=open]:hidden" />
+              <ChevronDown className="hidden size-4 data-[state=open]:block" />
+            </div>
+          ) : null}
+          <Icon className="size-4 shrink-0 text-primary" />
+          {!props.collapsed ? <span className="truncate">{props.label}</span> : null}
+        </AccordionTrigger>
+        <Button type="button" variant="ghost" size="icon" aria-label={`Create ${props.label.toLowerCase()} session`} disabled={props.isCreatingSession} onClick={() => {
+          void props.onCreateSession();
+        }}>
+          {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+        </Button>
+      </div>
+
+      <AccordionContent className={props.contentClassName}>{content}</AccordionContent>
+    </AccordionItem>
+  );
+}
+
+function AppSidebar(props: {
+  activeChatSessionId: string | null;
+  activeTranscriptSessionId: string | null;
+  chatModelActionByModelId: Record<string, 'loading' | 'unloading'>;
+  chatSessions: FoundryChatSessionView[];
+  deletingChatSessionId: string | null;
+  deletingTranscriptSessionId: string | null;
+  isCollapsed: boolean;
+  isCreatingChatSession: boolean;
+  isCreatingTranscriptSession: boolean;
+  onCreateChatSession: () => Promise<void>;
+  onCreateTranscriptSession: () => Promise<void>;
+  onDeleteChatSession: (sessionId: string) => Promise<void>;
+  onDeleteTranscriptSession: (sessionId: string) => Promise<void>;
+  onLoadChatSessionModel: (sessionId: string) => Promise<void>;
+  onLoadTranscriptSessionModel: (sessionId: string) => Promise<void>;
+  onNavigateSystem: () => void;
+  onOpenChatSession: (sessionId: string) => Promise<void>;
+  onOpenTranscriptSession: (sessionId: string) => Promise<void>;
+  onToggleCollapse: () => void;
+  onUnloadChatSessionModel: (sessionId: string) => Promise<void>;
+  onUnloadTranscriptSessionModel: (sessionId: string) => Promise<void>;
+  transcriptModelActionByModelId: Record<string, 'loading' | 'unloading'>;
+  transcriptSessions: FoundryTranscriptSessionView[];
+}) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>('chat');
+
+  const chatSidebarSessions: SidebarSession[] = props.chatSessions.map((session) => ({
+    id: session.id,
+    title: session.title,
+    modelId: session.modelId,
+    modelName: session.modelName,
+    updatedAt: session.updatedAt,
+    detailCountLabel: `${session.messageCount} messages`,
+    modelLoaded: session.modelLoaded,
+    isLive: false,
+    icon: 'chat'
+  }));
+
+  const transcriptSidebarSessions: SidebarSession[] = props.transcriptSessions.map((session) => ({
+    id: session.id,
+    title: session.title,
+    modelId: session.modelId,
+    modelName: session.modelName,
+    updatedAt: session.updatedAt,
+    detailCountLabel: `${session.entryCount} entries`,
+    modelLoaded: session.modelLoaded,
+    isLive: session.isTranscribing,
+    icon: 'transcript'
+  }));
+
+  const transcriptExpanded = expandedGroup === 'transcript';
 
   return (
     <aside className={cn(
@@ -124,92 +319,50 @@ function ChatSidebar(props: {
         <Button type="button" variant="ghost" size="icon" aria-label={props.isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={props.onToggleCollapse}>
           {props.isCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
         </Button>
-        {!props.isCollapsed ? (
-          <div className="flex min-w-0 items-center gap-2 px-2">
-            <MessageSquare className="size-4 text-primary" />
-            <span className="truncate text-sm font-medium">Chat</span>
-          </div>
-        ) : null}
-        <Button type="button" variant="ghost" size="icon" aria-label="Create session" disabled={props.isCreatingSession} onClick={() => {
-          void props.onCreateSession();
-        }}>
-          {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-        </Button>
+        {!props.isCollapsed ? <p className="text-sm font-medium text-muted-foreground">Sessions</p> : null}
+        <div className="w-9" />
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-3 py-4">
-        <div className="space-y-2">
-          {props.sessions.length > 0 ? props.sessions.map((session) => {
-            const isActive = props.activeSessionId === session.id;
-            const sessionAction = props.modelActionByModelId[session.modelId];
-
-            return (
-              <div key={session.id} className="relative">
-                <button
-                  type="button"
-                  className={cn(
-                    'flex w-full min-w-0 items-start gap-3 rounded-2xl px-3 py-3 text-left transition-colors',
-                    isActive ? 'bg-secondary text-secondary-foreground' : 'hover:bg-accent/70'
-                  )}
-                  onClick={() => {
-                    setMenuSessionId(null);
-                    void props.onOpenSession(session.id);
-                  }}
-                  title={props.isCollapsed ? session.title : undefined}
-                >
-                  <MessageSquare className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                  {!props.isCollapsed ? (
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{session.title}</p>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">{session.modelName}</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="rounded-md p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground"
-                          aria-label="Open session menu"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setMenuSessionId((currentValue) => currentValue === session.id ? null : session.id);
-                          }}
-                        >
-                          <Ellipsis className="size-4" />
-                        </button>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-                        <span>{session.messageCount} messages</span>
-                        <span>{formatTimestamp(session.updatedAt)}</span>
-                        <span className={cn('h-2 w-2 rounded-full', sessionAction ? 'bg-amber-500' : session.modelLoaded ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
-                      </div>
-                    </div>
-                  ) : null}
-                </button>
-                {!props.isCollapsed ? (
-                  <SessionMenu
-                    deletingSessionId={props.deletingSessionId}
-                    isOpen={menuSessionId === session.id}
-                    onClose={() => {
-                      setMenuSessionId(null);
-                    }}
-                    onDeleteSession={props.onDeleteSession}
-                    onLoadSessionModel={props.onLoadSessionModel}
-                    onUnloadSessionModel={props.onUnloadSessionModel}
-                    session={session}
-                    sessionAction={sessionAction}
-                  />
-                ) : null}
-              </div>
-            );
-          }) : (
-            <div className={cn(
-              'rounded-2xl border border-dashed border-border/70 bg-background/20 px-4 py-8 text-center',
-              props.isCollapsed ? 'px-2' : ''
-            )}>
-              {!props.isCollapsed ? <p className="text-sm text-muted-foreground">No chat sessions yet.</p> : <MessageSquare className="mx-auto size-4 text-muted-foreground" />}
-            </div>
-          )}
-        </div>
+        <Accordion type="single" value={expandedGroup} onValueChange={setExpandedGroup} className="flex min-h-full flex-col gap-4">
+          <HistoryGroup
+            activeSessionId={props.activeChatSessionId}
+            collapsed={props.isCollapsed}
+            deletingSessionId={props.deletingChatSessionId}
+            emptyLabel="No chat sessions yet."
+            icon="chat"
+            isCreatingSession={props.isCreatingChatSession}
+            label="Chat"
+            modelActionByModelId={props.chatModelActionByModelId}
+            onCreateSession={props.onCreateChatSession}
+            onDeleteSession={props.onDeleteChatSession}
+            onLoadSessionModel={props.onLoadChatSessionModel}
+            onOpenSession={props.onOpenChatSession}
+            onUnloadSessionModel={props.onUnloadChatSessionModel}
+            sessions={chatSidebarSessions}
+            value="chat"
+          />
+          {!transcriptExpanded ? <div className="flex-1" /> : null}
+          <HistoryGroup
+            activeSessionId={props.activeTranscriptSessionId}
+            collapsed={props.isCollapsed}
+            contentClassName={transcriptExpanded ? 'min-h-0 flex-1' : undefined}
+            deletingSessionId={props.deletingTranscriptSessionId}
+            emptyLabel="No transcript sessions yet."
+            icon="transcript"
+            isCreatingSession={props.isCreatingTranscriptSession}
+            itemClassName={transcriptExpanded ? 'min-h-0 flex-1' : undefined}
+            label="Transcript"
+            modelActionByModelId={props.transcriptModelActionByModelId}
+            onCreateSession={props.onCreateTranscriptSession}
+            onDeleteSession={props.onDeleteTranscriptSession}
+            onLoadSessionModel={props.onLoadTranscriptSessionModel}
+            onOpenSession={props.onOpenTranscriptSession}
+            onUnloadSessionModel={props.onUnloadTranscriptSessionModel}
+            sessions={transcriptSidebarSessions}
+            value="transcript"
+          />
+        </Accordion>
       </div>
 
       <div className="border-t border-border/70 px-3 py-3">
@@ -220,17 +373,14 @@ function ChatSidebar(props: {
             'h-auto w-full min-w-0 justify-start gap-3 px-3 py-3 text-left',
             props.isCollapsed ? 'justify-center px-0' : ''
           )}
-          onClick={() => {
-            setMenuSessionId(null);
-            props.onNavigateSystem();
-          }}
+          onClick={props.onNavigateSystem}
           title={props.isCollapsed ? 'Settings & Runtime' : undefined}
         >
           <Settings className="size-4 shrink-0" />
           {!props.isCollapsed ? (
             <span className="min-w-0">
               <span className="block text-sm font-medium">Settings & Runtime</span>
-              <span className="block text-xs text-muted-foreground">System controls and local runtime</span>
+              <span className="block text-xs text-muted-foreground">System controls, audio, and local runtime</span>
             </span>
           ) : null}
         </NavLink>
@@ -241,6 +391,8 @@ function ChatSidebar(props: {
 
 function AppShell(props: {
   activeChatSession: FoundryChatSessionDetailView | null;
+  activeTranscriptSession: FoundryTranscriptSessionDetailView | null;
+  audioSettings: FoundryAudioSettingsView;
   busyModelId: string | null;
   catalogModels: FoundryCatalogModelView[];
   chatDraftMessage: string;
@@ -249,36 +401,56 @@ function AppShell(props: {
   chatModelActionByModelId: Record<string, 'loading' | 'unloading'>;
   chatSessions: FoundryChatSessionView[];
   deletingChatSessionId: string | null;
+  deletingTranscriptSessionId: string | null;
   downloadProgressByModelId: Record<string, number>;
   epProgressByName: Record<string, number>;
   isCatalogLoading: boolean;
   isCatalogOpen: boolean;
   isChatSessionLoading: boolean;
   isCreatingChatSession: boolean;
+  isCreatingTranscriptSession: boolean;
   isRefreshingCatalog: boolean;
   isRegisteringEps: boolean;
   isRuntimeRefreshing: boolean;
+  isSavingAudioSettings: boolean;
   isSendingChatMessage: boolean;
+  isStartingTranscript: boolean;
+  isStoppingTranscript: boolean;
+  isTranscriptSessionLoading: boolean;
   isWebServiceToggling: boolean;
   onCloseCatalog: () => void;
   onCreateChatSession: () => Promise<void>;
+  onCreateTranscriptSession: () => Promise<void>;
   onDeleteChatSession: (sessionId: string) => Promise<void>;
+  onDeleteTranscriptSession: (sessionId: string) => Promise<void>;
   onLoadChatSessionModel: (sessionId: string) => Promise<void>;
+  onLoadTranscriptSessionModel: (sessionId: string) => Promise<void>;
   onMutateCatalogModel: (modelId: string, action: FoundryCatalogAction) => Promise<void>;
   onOpenCatalog: () => void;
   onOpenChatSession: (sessionId: string) => Promise<void>;
+  onOpenTranscriptSession: (sessionId: string) => Promise<void>;
   onRefreshCatalog: () => Promise<void>;
   onRefreshRuntime: () => Promise<void>;
   onRegisterExecutionProviders: (epName?: string) => Promise<void>;
+  onSaveAudioSettings: (settings: FoundryAudioSettingsInput) => Promise<void>;
   onSendChatMessage: () => Promise<void>;
   onSetChatDraftMessage: (value: string) => void;
+  onStartTranscript: () => Promise<void>;
+  onStopTranscript: () => Promise<void>;
   onToggleWebService: () => Promise<void>;
   onUnloadChatSessionModel: (sessionId: string) => Promise<void>;
+  onUnloadTranscriptSessionModel: (sessionId: string) => Promise<void>;
   onUpdateChatSessionModel: (sessionId: string, modelId: string) => Promise<void>;
+  onUpdateTranscriptSessionModel: (sessionId: string, modelId: string) => Promise<void>;
   runtime: FoundryRuntimeView;
   sidebarCollapsed: boolean;
   state: FoundryAppState;
   toggleSidebar: () => void;
+  transcriptEligibleModels: FoundryCatalogModelView[];
+  transcriptError: string | null;
+  transcriptModelActionByModelId: Record<string, 'loading' | 'unloading'>;
+  transcriptPreviewText: string;
+  transcriptSessions: FoundryTranscriptSessionView[];
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -304,25 +476,38 @@ function AppShell(props: {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.15),_transparent_45%),linear-gradient(180deg,_hsl(var(--background)),_hsl(var(--muted)/0.45))] text-foreground transition-colors">
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <ChatSidebar
-          activeSessionId={props.activeChatSession?.session.id ?? null}
-          deletingSessionId={props.deletingChatSessionId}
+        <AppSidebar
+          activeChatSessionId={props.activeChatSession?.session.id ?? null}
+          activeTranscriptSessionId={props.activeTranscriptSession?.session.id ?? null}
+          chatModelActionByModelId={props.chatModelActionByModelId}
+          chatSessions={props.chatSessions}
+          deletingChatSessionId={props.deletingChatSessionId}
+          deletingTranscriptSessionId={props.deletingTranscriptSessionId}
           isCollapsed={props.sidebarCollapsed}
-          isCreatingSession={props.isCreatingChatSession}
-          modelActionByModelId={props.chatModelActionByModelId}
-          onCreateSession={props.onCreateChatSession}
-          onDeleteSession={props.onDeleteChatSession}
-          onLoadSessionModel={props.onLoadChatSessionModel}
+          isCreatingChatSession={props.isCreatingChatSession}
+          isCreatingTranscriptSession={props.isCreatingTranscriptSession}
+          onCreateChatSession={props.onCreateChatSession}
+          onCreateTranscriptSession={props.onCreateTranscriptSession}
+          onDeleteChatSession={props.onDeleteChatSession}
+          onDeleteTranscriptSession={props.onDeleteTranscriptSession}
+          onLoadChatSessionModel={props.onLoadChatSessionModel}
+          onLoadTranscriptSessionModel={props.onLoadTranscriptSessionModel}
           onNavigateSystem={() => {
             navigate('/settings');
           }}
-          onOpenSession={async (sessionId) => {
+          onOpenChatSession={async (sessionId) => {
             await props.onOpenChatSession(sessionId);
             navigate('/chat');
           }}
+          onOpenTranscriptSession={async (sessionId) => {
+            await props.onOpenTranscriptSession(sessionId);
+            navigate('/transcript');
+          }}
           onToggleCollapse={props.toggleSidebar}
-          onUnloadSessionModel={props.onUnloadChatSessionModel}
-          sessions={props.chatSessions}
+          onUnloadChatSessionModel={props.onUnloadChatSessionModel}
+          onUnloadTranscriptSessionModel={props.onUnloadTranscriptSessionModel}
+          transcriptModelActionByModelId={props.transcriptModelActionByModelId}
+          transcriptSessions={props.transcriptSessions}
         />
 
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -363,6 +548,30 @@ function AppShell(props: {
                 }
               />
               <Route
+                path="/transcript"
+                element={
+                  <TranscriptPage
+                    activeSession={props.activeTranscriptSession}
+                    availableModels={props.transcriptEligibleModels}
+                    isCreatingSession={props.isCreatingTranscriptSession}
+                    isLoadingSession={props.isTranscriptSessionLoading}
+                    isStartingTranscription={props.isStartingTranscript}
+                    isStoppingTranscription={props.isStoppingTranscript}
+                    modelActionByModelId={props.transcriptModelActionByModelId}
+                    onLoadSessionModel={props.onLoadTranscriptSessionModel}
+                    onOpenCatalog={openCatalog}
+                    onStartTranscription={props.onStartTranscript}
+                    onStopTranscription={props.onStopTranscript}
+                    onUnloadSessionModel={props.onUnloadTranscriptSessionModel}
+                    onUpdateSessionModel={props.onUpdateTranscriptSessionModel}
+                    previewText={props.transcriptPreviewText}
+                    sessions={props.transcriptSessions}
+                    stateLoadedModelCount={props.state.loadedModelCount}
+                    transcriptError={props.transcriptError}
+                  />
+                }
+              />
+              <Route
                 path="/settings"
                 element={props.isCatalogOpen ? (
                   <CatalogPage
@@ -377,14 +586,17 @@ function AppShell(props: {
                   />
                 ) : (
                   <SettingsRuntimePage
+                    audioSettings={props.audioSettings}
                     epProgressByName={props.epProgressByName}
                     isCatalogOpen={props.isCatalogOpen}
                     isRegisteringEps={props.isRegisteringEps}
                     isRefreshing={props.isRuntimeRefreshing}
+                    isSavingAudioSettings={props.isSavingAudioSettings}
                     isTogglingWebService={props.isWebServiceToggling}
                     onOpenCatalog={openCatalog}
                     onRefresh={props.onRefreshRuntime}
                     onRegisterEp={props.onRegisterExecutionProviders}
+                    onSaveAudioSettings={props.onSaveAudioSettings}
                     onToggleWebService={props.onToggleWebService}
                     runtime={props.runtime}
                   />
@@ -436,14 +648,20 @@ export function App() {
   const [busyModelId, setBusyModelId] = useState<string | null>(null);
   const [downloadProgressByModelId, setDownloadProgressByModelId] = useState<Record<string, number>>({});
   const [runtime, setRuntime] = useState<FoundryRuntimeView>({ webServiceRunning: false, webServiceUrls: [], executionProviders: [] });
+  const [audioSettings, setAudioSettings] = useState<FoundryAudioSettingsView>(emptyAudioSettings);
   const [epProgressByName, setEpProgressByName] = useState<Record<string, number>>({});
   const [chatSessions, setChatSessions] = useState<FoundryChatSessionView[]>([]);
   const [activeChatSession, setActiveChatSession] = useState<FoundryChatSessionDetailView | null>(null);
   const [chatDraftMessage, setChatDraftMessage] = useState('');
   const [chatError, setChatError] = useState<string | null>(null);
+  const [transcriptSessions, setTranscriptSessions] = useState<FoundryTranscriptSessionView[]>([]);
+  const [activeTranscriptSession, setActiveTranscriptSession] = useState<FoundryTranscriptSessionDetailView | null>(null);
+  const [transcriptPreviewText, setTranscriptPreviewText] = useState('');
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [isRefreshingCatalog, setIsRefreshingCatalog] = useState(false);
   const [isRuntimeRefreshing, setIsRuntimeRefreshing] = useState(true);
+  const [isSavingAudioSettings, setIsSavingAudioSettings] = useState(false);
   const [isWebServiceToggling, setIsWebServiceToggling] = useState(false);
   const [isRegisteringEps, setIsRegisteringEps] = useState(false);
   const [isChatSessionLoading, setIsChatSessionLoading] = useState(true);
@@ -451,6 +669,12 @@ export function App() {
   const [isSendingChatMessage, setIsSendingChatMessage] = useState(false);
   const [deletingChatSessionId, setDeletingChatSessionId] = useState<string | null>(null);
   const [chatModelActionByModelId, setChatModelActionByModelId] = useState<Record<string, 'loading' | 'unloading'>>({});
+  const [isTranscriptSessionLoading, setIsTranscriptSessionLoading] = useState(true);
+  const [isCreatingTranscriptSession, setIsCreatingTranscriptSession] = useState(false);
+  const [isStartingTranscript, setIsStartingTranscript] = useState(false);
+  const [isStoppingTranscript, setIsStoppingTranscript] = useState(false);
+  const [deletingTranscriptSessionId, setDeletingTranscriptSessionId] = useState<string | null>(null);
+  const [transcriptModelActionByModelId, setTranscriptModelActionByModelId] = useState<Record<string, 'loading' | 'unloading'>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
 
@@ -550,6 +774,55 @@ export function App() {
 
     const appApi = globalThis.window?.foundryLocalApp;
 
+    if (!appApi || typeof appApi.getTranscriptSessions !== 'function' || typeof appApi.getTranscriptSession !== 'function') {
+      setIsTranscriptSessionLoading(false);
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void appApi.getTranscriptSessions().then(async (transcriptView) => {
+      if (cancelled) {
+        return;
+      }
+
+      setTranscriptSessions(transcriptView.sessions);
+
+      if (transcriptView.activeSessionId) {
+        try {
+          const sessionDetail = await appApi.getTranscriptSession(transcriptView.activeSessionId);
+
+          if (!cancelled) {
+            setActiveTranscriptSession(sessionDetail);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setTranscriptError(error instanceof Error ? error.message : 'Failed to load the active transcript session.');
+          }
+        }
+      }
+
+      if (!cancelled) {
+        setIsTranscriptSessionLoading(false);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setTranscriptError(error instanceof Error ? error.message : 'Failed to load transcript sessions.');
+        setIsTranscriptSessionLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const appApi = globalThis.window?.foundryLocalApp;
+
     if (!appApi || typeof appApi.getRuntime !== 'function') {
       setIsRuntimeRefreshing(false);
 
@@ -567,6 +840,35 @@ export function App() {
       if (!cancelled) {
         setRuntime({ webServiceRunning: false, webServiceUrls: [], executionProviders: [] });
         setIsRuntimeRefreshing(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getAudioSettings !== 'function') {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void appApi.getAudioSettings().then((nextAudioSettings) => {
+      if (!cancelled) {
+        setAudioSettings(nextAudioSettings);
+      }
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setAudioSettings({
+          ...emptyAudioSettings,
+          deviceAccessError: error instanceof Error ? error.message : 'Failed to load audio settings.'
+        });
       }
     });
 
@@ -671,6 +973,63 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.onTranscriptStreamEvent !== 'function') {
+      return () => undefined;
+    }
+
+    return appApi.onTranscriptStreamEvent((streamEvent: FoundryTranscriptStreamEvent) => {
+      if (streamEvent.type === 'transcription-preview-updated') {
+        if (activeTranscriptSession?.session.id === streamEvent.sessionId) {
+          setTranscriptPreviewText(streamEvent.preview);
+        }
+
+        return;
+      }
+
+      if (streamEvent.type === 'transcription-started') {
+        setTranscriptSessions((currentValue) => currentValue.map((session) => session.id === streamEvent.sessionId ? { ...session, isTranscribing: true } : { ...session, isTranscribing: false }));
+        return;
+      }
+
+      if (streamEvent.type === 'transcription-entry-committed') {
+        setActiveTranscriptSession((currentValue) => {
+          if (!currentValue || currentValue.session.id !== streamEvent.sessionId) {
+            return currentValue;
+          }
+
+          return {
+            session: {
+              ...currentValue.session,
+              updatedAt: streamEvent.entry.createdAt,
+              entryCount: currentValue.entries.length + 1
+            },
+            entries: [...currentValue.entries, streamEvent.entry]
+          };
+        });
+        setTranscriptSessions((currentValue) => currentValue.map((session) => session.id === streamEvent.sessionId ? {
+          ...session,
+          updatedAt: streamEvent.entry.createdAt,
+          entryCount: session.entryCount + 1
+        } : session));
+        return;
+      }
+
+      if (streamEvent.type === 'transcription-stopped') {
+        setTranscriptPreviewText('');
+        setTranscriptSessions((currentValue) => currentValue.map((session) => session.id === streamEvent.sessionId ? { ...session, isTranscribing: false } : session));
+        return;
+      }
+
+      if (streamEvent.type === 'transcription-failed') {
+        setTranscriptError(streamEvent.message);
+        setTranscriptPreviewText('');
+      }
+    });
+  }, [activeTranscriptSession?.session.id]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const appApi = globalThis.window?.foundryLocalApp;
@@ -726,6 +1085,46 @@ export function App() {
     }
   };
 
+  const refreshChatSessions = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getChatSessions !== 'function') {
+      return;
+    }
+
+    const chatView = await appApi.getChatSessions();
+    setChatSessions(chatView.sessions);
+
+    if (activeChatSession) {
+      try {
+        const sessionDetail = await appApi.getChatSession(activeChatSession.session.id);
+        setActiveChatSession(sessionDetail);
+      } catch {
+        setActiveChatSession(null);
+      }
+    }
+  };
+
+  const refreshTranscriptSessions = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getTranscriptSessions !== 'function') {
+      return;
+    }
+
+    const transcriptView = await appApi.getTranscriptSessions();
+    setTranscriptSessions(transcriptView.sessions);
+
+    if (activeTranscriptSession) {
+      try {
+        const sessionDetail = await appApi.getTranscriptSession(activeTranscriptSession.session.id);
+        setActiveTranscriptSession(sessionDetail);
+      } catch {
+        setActiveTranscriptSession(null);
+      }
+    }
+  };
+
   const mutateCatalogModel = async (modelId: string, action: FoundryCatalogAction): Promise<void> => {
     const appApi = globalThis.window?.foundryLocalApp;
 
@@ -745,18 +1144,7 @@ export function App() {
       });
       const nextState = await appApi.getAppState();
       setState(nextState);
-
-      const chatView = await appApi.getChatSessions();
-      setChatSessions(chatView.sessions);
-
-      if (activeChatSession) {
-        try {
-          const sessionDetail = await appApi.getChatSession(activeChatSession.session.id);
-          setActiveChatSession(sessionDetail);
-        } catch {
-          setActiveChatSession(null);
-        }
-      }
+      await Promise.all([refreshChatSessions(), refreshTranscriptSessions()]);
     } finally {
       setBusyModelId(null);
     }
@@ -825,6 +1213,26 @@ export function App() {
       });
     } finally {
       setIsRegisteringEps(false);
+    }
+  };
+
+  const saveAudioSettings = async (settings: FoundryAudioSettingsInput): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.updateAudioSettings !== 'function') {
+      return;
+    }
+
+    setIsSavingAudioSettings(true);
+    setTranscriptError(null);
+
+    try {
+      const nextAudioSettings = await appApi.updateAudioSettings(settings);
+      setAudioSettings(nextAudioSettings);
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to update audio settings.');
+    } finally {
+      setIsSavingAudioSettings(false);
     }
   };
 
@@ -1047,12 +1455,211 @@ export function App() {
     }
   };
 
+  const openTranscriptSession = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.getTranscriptSession !== 'function' || typeof appApi.getTranscriptSessions !== 'function') {
+      return;
+    }
+
+    setIsTranscriptSessionLoading(true);
+    setTranscriptError(null);
+
+    try {
+      const [sessionDetail, transcriptView] = await Promise.all([appApi.getTranscriptSession(sessionId), appApi.getTranscriptSessions()]);
+      setActiveTranscriptSession(sessionDetail);
+      setTranscriptSessions(transcriptView.sessions);
+      setTranscriptPreviewText('');
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to open transcript session.');
+    } finally {
+      setIsTranscriptSessionLoading(false);
+    }
+  };
+
+  const createTranscriptSession = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+    const preferredModelId = activeTranscriptSession?.session.modelId ?? transcriptEligibleModels[0]?.id;
+
+    if (!preferredModelId || !appApi || typeof appApi.createTranscriptSession !== 'function' || typeof appApi.getTranscriptSessions !== 'function') {
+      return;
+    }
+
+    setIsCreatingTranscriptSession(true);
+    setTranscriptError(null);
+
+    try {
+      const sessionDetail = await appApi.createTranscriptSession(preferredModelId);
+      const transcriptView = await appApi.getTranscriptSessions();
+      setActiveTranscriptSession(sessionDetail);
+      setTranscriptSessions(transcriptView.sessions);
+      setTranscriptPreviewText('');
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to create transcript session.');
+    } finally {
+      setIsCreatingTranscriptSession(false);
+    }
+  };
+
+  const updateTranscriptSessionModel = async (sessionId: string, modelId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!sessionId || !appApi || typeof appApi.updateTranscriptSessionModel !== 'function' || typeof appApi.getTranscriptSessions !== 'function') {
+      return;
+    }
+
+    setTranscriptError(null);
+
+    try {
+      const sessionDetail = await appApi.updateTranscriptSessionModel(sessionId, modelId);
+      const transcriptView = await appApi.getTranscriptSessions();
+      setActiveTranscriptSession(sessionDetail);
+      setTranscriptSessions(transcriptView.sessions);
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to update transcript session model.');
+    }
+  };
+
+  const loadTranscriptSessionModel = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+    const session = transcriptSessions.find((entry) => entry.id === sessionId);
+
+    if (!session || !appApi || typeof appApi.loadTranscriptSessionModel !== 'function') {
+      return;
+    }
+
+    setTranscriptModelActionByModelId((currentValue) => ({
+      ...currentValue,
+      [session.modelId]: 'loading'
+    }));
+    setTranscriptError(null);
+
+    try {
+      const transcriptView = await appApi.loadTranscriptSessionModel(sessionId);
+      setTranscriptSessions(transcriptView.sessions);
+      await refreshModelState();
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to load session model.');
+    } finally {
+      setTranscriptModelActionByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+        delete nextValue[session.modelId];
+        return nextValue;
+      });
+    }
+  };
+
+  const unloadTranscriptSessionModel = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+    const session = transcriptSessions.find((entry) => entry.id === sessionId);
+
+    if (!session || !appApi || typeof appApi.unloadTranscriptSessionModel !== 'function') {
+      return;
+    }
+
+    setTranscriptModelActionByModelId((currentValue) => ({
+      ...currentValue,
+      [session.modelId]: 'unloading'
+    }));
+    setTranscriptError(null);
+
+    try {
+      const transcriptView = await appApi.unloadTranscriptSessionModel(sessionId);
+      setTranscriptSessions(transcriptView.sessions);
+      await refreshModelState();
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to unload session model.');
+    } finally {
+      setTranscriptModelActionByModelId((currentValue) => {
+        const nextValue = { ...currentValue };
+        delete nextValue[session.modelId];
+        return nextValue;
+      });
+    }
+  };
+
+  const deleteTranscriptSession = async (sessionId: string): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!appApi || typeof appApi.deleteTranscriptSession !== 'function' || typeof appApi.getTranscriptSession !== 'function') {
+      return;
+    }
+
+    setDeletingTranscriptSessionId(sessionId);
+    setTranscriptError(null);
+
+    try {
+      const transcriptView = await appApi.deleteTranscriptSession(sessionId);
+      setTranscriptSessions(transcriptView.sessions);
+
+      if (activeTranscriptSession?.session.id === sessionId) {
+        if (transcriptView.activeSessionId) {
+          const nextSessionDetail = await appApi.getTranscriptSession(transcriptView.activeSessionId);
+          setActiveTranscriptSession(nextSessionDetail);
+        } else {
+          setActiveTranscriptSession(null);
+        }
+      }
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to delete transcript session.');
+    } finally {
+      setDeletingTranscriptSessionId(null);
+    }
+  };
+
+  const startTranscript = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!activeTranscriptSession || !appApi || typeof appApi.startTranscriptSession !== 'function') {
+      return;
+    }
+
+    setIsStartingTranscript(true);
+    setTranscriptError(null);
+    setTranscriptPreviewText('');
+
+    try {
+      const sessionDetail = await appApi.startTranscriptSession(activeTranscriptSession.session.id);
+      setActiveTranscriptSession(sessionDetail);
+      await refreshTranscriptSessions();
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to start live transcription.');
+    } finally {
+      setIsStartingTranscript(false);
+    }
+  };
+
+  const stopTranscript = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!activeTranscriptSession || !appApi || typeof appApi.stopTranscriptSession !== 'function') {
+      return;
+    }
+
+    setIsStoppingTranscript(true);
+    setTranscriptError(null);
+
+    try {
+      const sessionDetail = await appApi.stopTranscriptSession(activeTranscriptSession.session.id);
+      setActiveTranscriptSession(sessionDetail);
+      setTranscriptPreviewText('');
+      await refreshTranscriptSessions();
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : 'Failed to stop live transcription.');
+    } finally {
+      setIsStoppingTranscript(false);
+    }
+  };
+
   const downloadedModels = useMemo(() => catalogModels.filter((model) => model.downloaded), [catalogModels]);
   const chatEligibleModels = useMemo(() => downloadedModels.filter((model) => model.supportsTextChat), [downloadedModels]);
+  const transcriptEligibleModels = useMemo(() => downloadedModels.filter((model) => model.supportsLiveTranscription), [downloadedModels]);
 
   return (
     <AppShell
       activeChatSession={activeChatSession}
+      activeTranscriptSession={activeTranscriptSession}
+      audioSettings={audioSettings}
       busyModelId={busyModelId}
       catalogModels={catalogModels}
       chatDraftMessage={chatDraftMessage}
@@ -1061,42 +1668,62 @@ export function App() {
       chatModelActionByModelId={chatModelActionByModelId}
       chatSessions={chatSessions}
       deletingChatSessionId={deletingChatSessionId}
+      deletingTranscriptSessionId={deletingTranscriptSessionId}
       downloadProgressByModelId={downloadProgressByModelId}
       epProgressByName={epProgressByName}
       isCatalogLoading={isCatalogLoading}
       isCatalogOpen={isCatalogOpen}
       isChatSessionLoading={isChatSessionLoading}
       isCreatingChatSession={isCreatingChatSession}
+      isCreatingTranscriptSession={isCreatingTranscriptSession}
       isRefreshingCatalog={isRefreshingCatalog}
       isRegisteringEps={isRegisteringEps}
       isRuntimeRefreshing={isRuntimeRefreshing}
+      isSavingAudioSettings={isSavingAudioSettings}
       isSendingChatMessage={isSendingChatMessage}
+      isStartingTranscript={isStartingTranscript}
+      isStoppingTranscript={isStoppingTranscript}
+      isTranscriptSessionLoading={isTranscriptSessionLoading}
       isWebServiceToggling={isWebServiceToggling}
       onCloseCatalog={() => {
         setIsCatalogOpen(false);
       }}
       onCreateChatSession={createChatSession}
+      onCreateTranscriptSession={createTranscriptSession}
       onDeleteChatSession={deleteChatSession}
+      onDeleteTranscriptSession={deleteTranscriptSession}
       onLoadChatSessionModel={loadChatSessionModel}
+      onLoadTranscriptSessionModel={loadTranscriptSessionModel}
       onMutateCatalogModel={mutateCatalogModel}
       onOpenCatalog={() => {
         setIsCatalogOpen(true);
       }}
       onOpenChatSession={openChatSession}
+      onOpenTranscriptSession={openTranscriptSession}
       onRefreshCatalog={refreshCatalog}
       onRefreshRuntime={refreshRuntime}
       onRegisterExecutionProviders={registerExecutionProviders}
+      onSaveAudioSettings={saveAudioSettings}
       onSendChatMessage={sendChatMessage}
       onSetChatDraftMessage={setChatDraftMessage}
+      onStartTranscript={startTranscript}
+      onStopTranscript={stopTranscript}
       onToggleWebService={toggleWebService}
       onUnloadChatSessionModel={unloadChatSessionModel}
+      onUnloadTranscriptSessionModel={unloadTranscriptSessionModel}
       onUpdateChatSessionModel={updateChatSessionModel}
+      onUpdateTranscriptSessionModel={updateTranscriptSessionModel}
       runtime={runtime}
       sidebarCollapsed={sidebarCollapsed}
       state={state}
       toggleSidebar={() => {
         setSidebarCollapsed((currentValue) => !currentValue);
       }}
+      transcriptEligibleModels={transcriptEligibleModels}
+      transcriptError={transcriptError}
+      transcriptModelActionByModelId={transcriptModelActionByModelId}
+      transcriptPreviewText={transcriptPreviewText}
+      transcriptSessions={transcriptSessions}
     />
   );
 }

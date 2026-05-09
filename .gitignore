@@ -3,3 +3,6 @@ dist/
 renderer-dist/
 release/
 build/generated/
+.venv/
+
+*.log

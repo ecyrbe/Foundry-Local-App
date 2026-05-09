@@ -10,6 +10,8 @@ const foundryLocalAppApi: FoundryAppApi = {
   startWebService: () => ipcRenderer.invoke('foundry-local-app:start-web-service'),
   stopWebService: () => ipcRenderer.invoke('foundry-local-app:stop-web-service'),
   registerExecutionProviders: (epNames) => ipcRenderer.invoke('foundry-local-app:register-execution-providers', epNames),
+  getAudioSettings: () => ipcRenderer.invoke('foundry-local-app:get-audio-settings'),
+  updateAudioSettings: (settings) => ipcRenderer.invoke('foundry-local-app:update-audio-settings', settings),
   getChatSessions: () => ipcRenderer.invoke('foundry-local-app:get-chat-sessions'),
   getChatSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:get-chat-session', sessionId),
   createChatSession: (modelId) => ipcRenderer.invoke('foundry-local-app:create-chat-session', modelId),
@@ -18,6 +20,15 @@ const foundryLocalAppApi: FoundryAppApi = {
   loadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:load-chat-session-model', sessionId),
   unloadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:unload-chat-session-model', sessionId),
   sendChatMessage: (sessionId, message) => ipcRenderer.invoke('foundry-local-app:send-chat-message', sessionId, message),
+  getTranscriptSessions: () => ipcRenderer.invoke('foundry-local-app:get-transcript-sessions'),
+  getTranscriptSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:get-transcript-session', sessionId),
+  createTranscriptSession: (modelId) => ipcRenderer.invoke('foundry-local-app:create-transcript-session', modelId),
+  updateTranscriptSessionModel: (sessionId, modelId) => ipcRenderer.invoke('foundry-local-app:update-transcript-session-model', sessionId, modelId),
+  deleteTranscriptSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:delete-transcript-session', sessionId),
+  loadTranscriptSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:load-transcript-session-model', sessionId),
+  unloadTranscriptSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:unload-transcript-session-model', sessionId),
+  startTranscriptSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:start-transcript-session', sessionId),
+  stopTranscriptSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:stop-transcript-session', sessionId),
   onCatalogDownloadProgress: (listener) => {
     const wrappedListener = (_event: unknown, progressEvent: Parameters<typeof listener>[0]) => {
       listener(progressEvent);
@@ -49,6 +60,17 @@ const foundryLocalAppApi: FoundryAppApi = {
 
     return () => {
       ipcRenderer.removeListener('foundry-local-app:chat-stream-event', wrappedListener);
+    };
+  },
+  onTranscriptStreamEvent: (listener) => {
+    const wrappedListener = (_event: unknown, streamEvent: Parameters<typeof listener>[0]) => {
+      listener(streamEvent);
+    };
+
+    ipcRenderer.on('foundry-local-app:transcript-stream-event', wrappedListener);
+
+    return () => {
+      ipcRenderer.removeListener('foundry-local-app:transcript-stream-event', wrappedListener);
     };
   }
 };

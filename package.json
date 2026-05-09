@@ -5,6 +5,7 @@
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
+    "postinstall": "electron-rebuild -f -w naudiodon2 -w segfault-handler",
     "assets:icons": "node scripts/generate-icons.mjs",
     "build": "tsc && vite build",
     "build:main": "tsc",
@@ -46,6 +47,7 @@
     "@radix-ui/react-switch": "^1.2.6",
     "foundry-local-sdk": "^1.1.0",
     "foundry-local-sdk-winml": "^1.1.0",
+    "naudiodon2": "^2.5.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.0"

@@ -16,22 +16,29 @@ Foundry Local App packages the SDK behind a native Electron shell and a modern R
 - Browse the local Foundry model catalog with rich metadata.
 - Download, remove, load, and unload models from the same Catalog experience.
 - Manage persisted chat sessions backed by downloaded local models.
+- Capture live local audio transcription with persisted transcript sessions and audio settings.
 - Inspect runtime status, web service state, and execution provider registration.
 - Package the app for Windows and publish signed `.msix` releases with GitHub Actions.
 
 ## Screenshots
-
-### Catalog
-
-Browse the local model catalog, filter to downloaded models, and manage the full model lifecycle from one place. Catalog is the operational hub for discovering models, checking metadata, and triggering download, remove, load, and unload actions without switching views.
-
-![Catalog view](./docs/catalog.png)
 
 ### Chat
 
 Run local conversations against downloaded models with persistent session history and clear model state. The Chat page is built for fast iteration, letting you reopen prior threads, keep context across restarts, and move from model selection to response generation in a single workspace.
 
 ![Chat view](./docs/chat.png)
+
+### Transcript
+
+Transcribe live microphone audio with local audio-capable models while keeping a dedicated transcript history. The Transcript page combines persisted sessions, live preview text, and quick access to model state so you can move between past captures and active transcription without losing context.
+
+![Transcript view](./docs/transcript.png)
+
+### Catalog
+
+Browse the local model catalog, filter to downloaded models, and manage the full model lifecycle from one place. Catalog is the operational hub for discovering models, checking metadata, and triggering download, remove, load, and unload actions without switching views.
+
+![Catalog view](./docs/catalog.png)
 
 ### Settings And Runtime
 
@@ -104,7 +111,7 @@ npm run dist:win:msix      # Build an MSIX package from the Electron app
 - Foundry Local SDK state lives in the Electron main process.
 - The renderer consumes serialized state over IPC through `src/preload.ts`.
 - Routing uses `HashRouter` because the renderer is loaded from `file://`.
-- The current product flow centers on Catalog, Chat, Runtime, and Settings.
+- The current product flow centers on Catalog, Chat, Transcript, Runtime, and Settings.
 
 ## Building Windows Packages
 
@@ -169,6 +176,7 @@ Implemented or actively targeted:
 - Catalog browsing and local model management
 - Downloaded-model filtering and loaded-state badges
 - Persisted local chat sessions
+- Live audio transcription with persisted transcript sessions
 - Runtime and web service controls
 - Execution provider discovery and registration
 

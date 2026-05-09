@@ -41,6 +41,7 @@ export interface FoundryCatalogModelView {
   downloaded: boolean;
   loaded: boolean;
   supportsTextChat: boolean;
+  supportsLiveTranscription: boolean;
   supportsToolCalling: boolean;
 }
 
@@ -64,6 +65,27 @@ export interface FoundryRuntimeView {
   webServiceRunning: boolean;
   webServiceUrls: string[];
   executionProviders: FoundryExecutionProviderView[];
+}
+
+export interface FoundryAudioInputDeviceView {
+  id: number;
+  name: string;
+  hostApiName: string;
+  maxInputChannels: number;
+  defaultSampleRate: number;
+}
+
+export interface FoundryAudioSettingsInput {
+  selectedInputDeviceId: number | null;
+  sampleRate: number;
+  channels: number;
+  bitsPerSample: 16 | 32;
+  language: string;
+}
+
+export interface FoundryAudioSettingsView extends FoundryAudioSettingsInput {
+  availableInputDevices: FoundryAudioInputDeviceView[];
+  deviceAccessError: string | null;
 }
 
 export interface FoundryEpDownloadProgressEvent {
@@ -139,6 +161,63 @@ export type FoundryChatStreamEvent =
     message: FoundryChatMessageView;
   };
 
+export interface FoundryTranscriptEntryView {
+  id: string;
+  content: string;
+  createdAt: string;
+  startTime: number | null;
+  endTime: number | null;
+  failed?: boolean;
+}
+
+export interface FoundryTranscriptSessionView {
+  id: string;
+  title: string;
+  modelId: string;
+  modelName: string;
+  modelAlias: string;
+  createdAt: string;
+  updatedAt: string;
+  entryCount: number;
+  modelLoaded: boolean;
+  isTranscribing: boolean;
+}
+
+export interface FoundryTranscriptSessionDetailView {
+  session: FoundryTranscriptSessionView;
+  entries: FoundryTranscriptEntryView[];
+}
+
+export interface FoundryTranscriptView {
+  sessions: FoundryTranscriptSessionView[];
+  activeSessionId: string | null;
+}
+
+export type FoundryTranscriptStreamEvent =
+  | {
+    type: 'transcription-started';
+    sessionId: string;
+  }
+  | {
+    type: 'transcription-preview-updated';
+    sessionId: string;
+    preview: string;
+  }
+  | {
+    type: 'transcription-entry-committed';
+    sessionId: string;
+    entry: FoundryTranscriptEntryView;
+  }
+  | {
+    type: 'transcription-stopped';
+    sessionId: string;
+  }
+  | {
+    type: 'transcription-failed';
+    sessionId: string;
+    message: string;
+  };
+
 export interface FoundryAppApi {
   getAppState: () => Promise<FoundryAppState>;
   getCatalog: () => Promise<FoundryCatalogView>;
@@ -148,6 +227,8 @@ export interface FoundryAppApi {
   startWebService: () => Promise<FoundryRuntimeView>;
   stopWebService: () => Promise<FoundryRuntimeView>;
   registerExecutionProviders: (epNames?: string[]) => Promise<FoundryEpDownloadResultView>;
+  getAudioSettings: () => Promise<FoundryAudioSettingsView>;
+  updateAudioSettings: (settings: FoundryAudioSettingsInput) => Promise<FoundryAudioSettingsView>;
   getChatSessions: () => Promise<FoundryChatView>;
   getChatSession: (sessionId: string) => Promise<FoundryChatSessionDetailView>;
   createChatSession: (modelId: string) => Promise<FoundryChatSessionDetailView>;
@@ -156,9 +237,19 @@ export interface FoundryAppApi {
   loadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   unloadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   sendChatMessage: (sessionId: string, message: string) => Promise<FoundryChatSendResultView>;
+  getTranscriptSessions: () => Promise<FoundryTranscriptView>;
+  getTranscriptSession: (sessionId: string) => Promise<FoundryTranscriptSessionDetailView>;
+  createTranscriptSession: (modelId: string) => Promise<FoundryTranscriptSessionDetailView>;
+  updateTranscriptSessionModel: (sessionId: string, modelId: string) => Promise<FoundryTranscriptSessionDetailView>;
+  deleteTranscriptSession: (sessionId: string) => Promise<FoundryTranscriptView>;
+  loadTranscriptSessionModel: (sessionId: string) => Promise<FoundryTranscriptView>;
+  unloadTranscriptSessionModel: (sessionId: string) => Promise<FoundryTranscriptView>;
+  startTranscriptSession: (sessionId: string) => Promise<FoundryTranscriptSessionDetailView>;
+  stopTranscriptSession: (sessionId: string) => Promise<FoundryTranscriptSessionDetailView>;
   onCatalogDownloadProgress: (listener: (event: FoundryDownloadProgressEvent) => void) => () => void;
   onEpDownloadProgress: (listener: (event: FoundryEpDownloadProgressEvent) => void) => () => void;
   onChatStreamEvent: (listener: (event: FoundryChatStreamEvent) => void) => () => void;
+  onTranscriptStreamEvent: (listener: (event: FoundryTranscriptStreamEvent) => void) => () => void;
 }
 
 declare global {

@@ -23,6 +23,7 @@ Current intended scope:
 6. `06-model-details-and-variants.md`
 7. `07-updates-and-version-awareness.md`
 8. `08-structured-output-playground.md`
+9. `09-live-audio-transcription.md`
 
 ## Notes
 
@@ -34,5 +35,7 @@ Current intended scope:
 - Prefer `FoundryLocalManager.createAsync()` during app startup.
 - Prefer `ResponsesClient` for the first chat implementation because it has the strongest type surface.
 - Chat sessions should behave like standard threaded conversations and persist in app-owned storage; do not rely on the SDK as the source of truth for session lists or transcript history.
+- Live transcription sessions should also persist in app-owned storage so users can reopen prior transcript history after the capture session has stopped.
 - Downloaded models should be managed from the Catalog page via filters and per-model actions, not from a separate navigation page.
 - Loaded models should be surfaced in a persistent status area and relevant badges, not as a dedicated navigation page.
+- Sidebar navigation can group related histories when a feature introduces multiple session types, but the top-level app navigation should remain focused on major product areas.
