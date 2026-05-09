@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Ellipsis, LoaderCircle, MessageSquare, Mic, PanelLeftClose, PanelLeftOpen, Play, Plus, Settings, Trash2, XCircle } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -81,6 +81,8 @@ type SidebarSession = {
   icon: 'chat' | 'transcript';
 };
 
+type SidebarGroupValue = 'chat' | 'transcript';
+
 function SidebarSessionMenu(props: {
   deletingSessionId: string | null;
   isOpen: boolean;
@@ -141,12 +143,35 @@ function HistoryGroup(props: {
   value: string;
 }) {
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const groupRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!props.sessions.some((session) => session.id === menuSessionId)) {
       setMenuSessionId(null);
     }
   }, [menuSessionId, props.sessions]);
+
+  useEffect(() => {
+    if (!menuSessionId) {
+      return () => undefined;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+
+      if (!groupRef.current?.contains(event.target)) {
+        setMenuSessionId(null);
+      }
+    };
+
+    globalThis.document.addEventListener('pointerdown', handlePointerDown);
+
+    return () => {
+      globalThis.document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [menuSessionId]);
 
   const Icon = props.icon === 'chat' ? MessageSquare : Mic;
   const content = (
@@ -228,31 +253,33 @@ function HistoryGroup(props: {
 
   return (
     <AccordionItem value={props.value} className={cn('space-y-2', props.itemClassName)}>
-      <div className={cn('flex items-center gap-2', props.collapsed ? 'justify-center' : 'justify-between')}>
-        <AccordionTrigger
-          className={cn(
-            'flex min-w-0 items-center gap-2 rounded-xl px-2 py-2 text-left text-sm font-medium transition-colors hover:bg-accent/70',
-            props.collapsed ? 'justify-center px-0' : 'flex-1'
-          )}
-          title={props.collapsed ? props.label : undefined}
-        >
-          {!props.collapsed ? (
-            <div className="text-muted-foreground">
-              <ChevronRight className="size-4 data-[state=open]:hidden" />
-              <ChevronDown className="hidden size-4 data-[state=open]:block" />
-            </div>
-          ) : null}
-          <Icon className="size-4 shrink-0 text-primary" />
-          {!props.collapsed ? <span className="truncate">{props.label}</span> : null}
-        </AccordionTrigger>
-        <Button type="button" variant="ghost" size="icon" aria-label={`Create ${props.label.toLowerCase()} session`} disabled={props.isCreatingSession} onClick={() => {
-          void props.onCreateSession();
-        }}>
-          {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
-        </Button>
-      </div>
+      <div ref={groupRef}>
+        <div className={cn('flex items-center gap-2', props.collapsed ? 'justify-center' : 'justify-between')}>
+          <AccordionTrigger
+            className={cn(
+              'flex min-w-0 items-center gap-2 rounded-xl px-2 py-2 text-left text-sm font-medium transition-colors hover:bg-accent/70',
+              props.collapsed ? 'justify-center px-0' : 'flex-1'
+            )}
+            title={props.collapsed ? props.label : undefined}
+          >
+            {!props.collapsed ? (
+              <div className="text-muted-foreground">
+                <ChevronRight className="size-4 data-[state=open]:hidden" />
+                <ChevronDown className="hidden size-4 data-[state=open]:block" />
+              </div>
+            ) : null}
+            <Icon className="size-4 shrink-0 text-primary" />
+            {!props.collapsed ? <span className="truncate">{props.label}</span> : null}
+          </AccordionTrigger>
+          <Button type="button" variant="ghost" size="icon" aria-label={`Create ${props.label.toLowerCase()} session`} disabled={props.isCreatingSession} onClick={() => {
+            void props.onCreateSession();
+          }}>
+            {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
+          </Button>
+        </div>
 
-      <AccordionContent className={props.contentClassName}>{content}</AccordionContent>
+        <AccordionContent className={props.contentClassName}>{content}</AccordionContent>
+      </div>
     </AccordionItem>
   );
 }
@@ -276,13 +303,15 @@ function AppSidebar(props: {
   onNavigateSystem: () => void;
   onOpenChatSession: (sessionId: string) => Promise<void>;
   onOpenTranscriptSession: (sessionId: string) => Promise<void>;
+  onSelectGroup: (group: SidebarGroupValue) => Promise<void>;
   onToggleCollapse: () => void;
   onUnloadChatSessionModel: (sessionId: string) => Promise<void>;
   onUnloadTranscriptSessionModel: (sessionId: string) => Promise<void>;
+  routeGroup: SidebarGroupValue | null;
   transcriptModelActionByModelId: Record<string, 'loading' | 'unloading'>;
   transcriptSessions: FoundryTranscriptSessionView[];
 }) {
-  const [expandedGroup, setExpandedGroup] = useState<string | null>('chat');
+  const [expandedGroup, setExpandedGroup] = useState<SidebarGroupValue>('chat');
 
   const chatSidebarSessions: SidebarSession[] = props.chatSessions.map((session) => ({
     id: session.id,
@@ -310,6 +339,22 @@ function AppSidebar(props: {
 
   const transcriptExpanded = expandedGroup === 'transcript';
 
+  useEffect(() => {
+    if (props.routeGroup) {
+      setExpandedGroup(props.routeGroup);
+    }
+  }, [props.routeGroup]);
+
+  const handleGroupChange = (nextValue: string | null) => {
+    if (!nextValue || nextValue === expandedGroup) {
+      return;
+    }
+
+    const nextGroup = nextValue as SidebarGroupValue;
+    setExpandedGroup(nextGroup);
+    void props.onSelectGroup(nextGroup);
+  };
+
   return (
     <aside className={cn(
       'relative flex h-full min-w-0 flex-col border-r border-border/70 bg-card/90 backdrop-blur supports-[backdrop-filter]:bg-card/80 transition-[width] duration-200',
@@ -324,7 +369,7 @@ function AppSidebar(props: {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-3 py-4">
-        <Accordion type="single" value={expandedGroup} onValueChange={setExpandedGroup} className="flex min-h-full flex-col gap-4">
+        <Accordion type="single" value={expandedGroup} onValueChange={handleGroupChange} className="flex min-h-full flex-col gap-4">
           <HistoryGroup
             activeSessionId={props.activeChatSessionId}
             collapsed={props.isCollapsed}
@@ -455,6 +500,11 @@ function AppShell(props: {
   const navigate = useNavigate();
   const location = useLocation();
   const [catalogReturnPath, setCatalogReturnPath] = useState('/settings');
+  const routeGroup: SidebarGroupValue | null = location.pathname === '/transcript'
+    ? 'transcript'
+    : location.pathname === '/chat' || location.pathname === '/'
+      ? 'chat'
+      : null;
 
   const openCatalog = () => {
     setCatalogReturnPath(location.pathname);
@@ -503,9 +553,30 @@ function AppShell(props: {
             await props.onOpenTranscriptSession(sessionId);
             navigate('/transcript');
           }}
+          onSelectGroup={async (group) => {
+            if (group === 'chat') {
+              const firstSession = props.chatSessions[0];
+
+              if (firstSession) {
+                await props.onOpenChatSession(firstSession.id);
+              }
+
+              navigate('/chat');
+              return;
+            }
+
+            const firstSession = props.transcriptSessions[0];
+
+            if (firstSession) {
+              await props.onOpenTranscriptSession(firstSession.id);
+            }
+
+            navigate('/transcript');
+          }}
           onToggleCollapse={props.toggleSidebar}
           onUnloadChatSessionModel={props.onUnloadChatSessionModel}
           onUnloadTranscriptSessionModel={props.onUnloadTranscriptSessionModel}
+          routeGroup={routeGroup}
           transcriptModelActionByModelId={props.transcriptModelActionByModelId}
           transcriptSessions={props.transcriptSessions}
         />

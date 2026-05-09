@@ -116,14 +116,14 @@ function AccordionContent({ children, className, ...props }: React.ComponentProp
       aria-hidden={!itemContext.isOpen}
       data-state={itemContext.isOpen ? 'open' : 'closed'}
       className={cn(
-        'grid overflow-hidden transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:grid-rows-[0fr] data-[state=open]:grid-rows-[1fr] motion-reduce:transition-none',
+        'grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:grid-rows-[0fr] data-[state=closed]:overflow-hidden data-[state=open]:grid-rows-[1fr] data-[state=open]:overflow-visible motion-reduce:transition-none',
         className
       )}
       {...props}
     >
       <div
         data-state={itemContext.isOpen ? 'open' : 'closed'}
-        className="min-h-0 overflow-hidden transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:-translate-y-1 data-[state=closed]:opacity-0 data-[state=open]:translate-y-0 data-[state=open]:opacity-100 motion-reduce:transition-none"
+        className="min-h-0 transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[state=closed]:-translate-y-1 data-[state=closed]:overflow-hidden data-[state=closed]:opacity-0 data-[state=open]:translate-y-0 data-[state=open]:overflow-visible data-[state=open]:opacity-100 motion-reduce:transition-none"
       >
         {children}
       </div>
