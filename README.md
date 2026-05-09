@@ -23,13 +23,19 @@ Foundry Local App packages the SDK behind a native Electron shell and a modern R
 
 ### Catalog
 
+Browse the local model catalog, filter to downloaded models, and manage the full model lifecycle from one place. Catalog is the operational hub for discovering models, checking metadata, and triggering download, remove, load, and unload actions without switching views.
+
 ![Catalog view](./docs/catalog.png)
 
 ### Chat
 
+Run local conversations against downloaded models with persistent session history and clear model state. The Chat page is built for fast iteration, letting you reopen prior threads, keep context across restarts, and move from model selection to response generation in a single workspace.
+
 ![Chat view](./docs/chat.png)
 
 ### Settings And Runtime
+
+Control the app experience and local runtime from a single administration surface. Settings and Runtime brings together theme preferences, embedded web service controls, execution provider registration, and status signals that help you keep local inference ready.
 
 ![Settings and runtime view](./docs/settings.png)
 
