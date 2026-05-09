@@ -19,7 +19,7 @@ function Sidebar({ children, className, collapsed, onToggle, ...props }: Sidebar
       {...props}
     >
       <div className="flex items-center justify-end px-3 pt-3">
-        <Button type="button" variant="ghost" size="icon" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={onToggle}>
+        <Button type="button" variant="ghost" size="icon" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={onToggle}>
           {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
         </Button>
       </div>

@@ -207,6 +207,7 @@ function HistoryGroup(props: {
                       type="button"
                       className="rounded-md p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground"
                       aria-label="Open session menu"
+                      title="Open session menu"
                       onClick={(event) => {
                         event.stopPropagation();
                         setMenuSessionId((currentValue) => currentValue === session.id ? null : session.id);
@@ -271,7 +272,7 @@ function HistoryGroup(props: {
             <Icon className="size-4 shrink-0 text-primary" />
             {!props.collapsed ? <span className="truncate">{props.label}</span> : null}
           </AccordionTrigger>
-          <Button type="button" variant="ghost" size="icon" aria-label={`Create ${props.label.toLowerCase()} session`} disabled={props.isCreatingSession} onClick={() => {
+          <Button type="button" variant="ghost" size="icon" aria-label={`Create ${props.label.toLowerCase()} session`} title={`Create ${props.label.toLowerCase()} session`} disabled={props.isCreatingSession} onClick={() => {
             void props.onCreateSession();
           }}>
             {props.isCreatingSession ? <LoaderCircle className="size-4 animate-spin" /> : <Plus className="size-4" />}
@@ -361,7 +362,7 @@ function AppSidebar(props: {
       props.isCollapsed ? 'w-[76px]' : 'w-[320px]'
     )}>
       <div className="flex items-center justify-between px-3 pt-3">
-        <Button type="button" variant="ghost" size="icon" aria-label={props.isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={props.onToggleCollapse}>
+        <Button type="button" variant="ghost" size="icon" aria-label={props.isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={props.isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={props.onToggleCollapse}>
           {props.isCollapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
         </Button>
         {!props.isCollapsed ? <p className="text-sm font-medium text-muted-foreground">Sessions</p> : null}
