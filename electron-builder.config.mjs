@@ -3,7 +3,7 @@ const productName = 'Foundry Local App';
 export default {
   appId: 'com.foundrylocal.app',
   productName,
-  asar: true,
+  asar: false,
   directories: {
     output: 'release',
     buildResources: 'build'
@@ -24,7 +24,26 @@ export default {
   },
   win: {
     icon: 'build/generated/icon.ico',
-    executableName: 'FoundryLocalApp',
-    signAndEditExecutable: false
+    executableName: 'foundry-app',
+    signAndEditExecutable: false,
+    target: [
+      {
+        target: 'portable',
+        arch: ['x64']
+      },
+      {
+        target: 'nsis',
+        arch: ['x64']
+      }
+    ]
+  },
+  portable: {
+    artifactName: 'foundry-app.${ext}'
+  },
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowToChangeInstallationDirectory: true,
+    artifactName: 'foundry-app-setup.${ext}'
   }
 };

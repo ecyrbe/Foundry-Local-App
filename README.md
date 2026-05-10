@@ -4,7 +4,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
-[![Release Workflow](https://img.shields.io/badge/release-msix%20workflow-available-2563EB)](./.github/workflows/release-msix.yml)
+[![Release Workflow](https://img.shields.io/badge/release-windows%20builds%20workflow-available-2563EB)](./.github/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 Desktop UI for browsing, downloading, loading, and chatting with local models through the Microsoft Foundry Local SDK.
@@ -19,7 +19,7 @@ Foundry Local App packages the SDK behind a native Electron shell and a modern R
 - Render Chat assistant responses as Markdown with syntax-highlighted code blocks and one-click copy actions.
 - Capture live local audio transcription with persisted transcript sessions and audio settings.
 - Inspect runtime status, web service state, and execution provider registration.
-- Package the app for Windows and publish signed `.msix` releases with GitHub Actions.
+- Package the app for Windows as both a portable `.exe` and an installer, then publish them with GitHub Actions.
 
 ## Screenshots
 
@@ -129,9 +129,11 @@ npm run build              # Build main and renderer bundles
 npm run build:main         # Build Electron main/preload only
 npm run build:renderer     # Build renderer only
 npm run dev:renderer       # Run the Vite renderer dev server
-npm run assets:icons       # Generate Windows and MSIX icon assets
+npm run assets:icons       # Generate Windows icon assets
 npm run dist:win:unpacked  # Build a packaged unpacked Windows app
-npm run dist:win:msix      # Build an MSIX package from the Electron app
+npm run dist:win:portable  # Build the portable Windows executable
+npm run dist:win:installer # Build the NSIS Windows installer
+npm run dist:win:release   # Build both Windows release artifacts
 ```
 
 ## Architecture Notes
@@ -154,49 +156,50 @@ Output:
 
 - `release/win-unpacked/`
 
-### MSIX Package
+### Portable Windows EXE
 
 ```bash
-npm run dist:win:msix
+npm run dist:win:portable
 ```
 
 Output:
 
-- `release/*.msix`
+- `release/foundry-app.exe`
 
-The MSIX flow does the following:
+The portable packaging flow does the following:
 
 1. Generates branded Windows icon assets.
-2. Builds the Electron app into `release/win-unpacked`.
-3. Creates an MSIX manifest and package using the Windows SDK `makeappx.exe` tool.
-4. Signs the package with `signtool.exe` when certificate secrets are available.
+2. Builds the Electron app and renderer bundles.
+3. Packages the app as a self-contained portable Windows executable.
+
+### Windows Installer
+
+```bash
+npm run dist:win:installer
+```
+
+Output:
+
+- `release/foundry-app-setup.exe`
+
+The installer flow does the following:
+
+1. Generates branded Windows icon assets.
+2. Builds the Electron app and renderer bundles.
+3. Packages the app as an NSIS installer.
 
 ## GitHub Release Pipeline
 
-This repository includes a Windows release workflow at `.github/workflows/release-msix.yml`.
+This repository includes a Windows release workflow at `.github/workflows/release.yml`.
 
 It runs when a tag matching `v*` is pushed and will:
 
 1. Install dependencies.
 2. Build the Electron app.
-3. Generate a signed `.msix` artifact.
-4. Upload the `.msix` to the corresponding GitHub Release.
+3. Generate both the portable `.exe` and NSIS installer artifacts.
+4. Upload both files to the corresponding GitHub Release.
 
-### Required GitHub Configuration
-
-Secrets:
-
-- `APPX_PUBLISHER`
-- `WINDOWS_CERT_BASE64`
-- `WINDOWS_CERT_PASSWORD`
-
-Repository variables:
-
-- `APPX_IDENTITY_NAME`
-- `APPX_APPLICATION_ID`
-- `APPX_PUBLISHER_DISPLAY_NAME`
-
-`APPX_PUBLISHER` must match the certificate subject used to sign the MSIX package.
+No special signing or MSIX-specific GitHub secrets are required for this portable release flow.
 
 ## Product Scope
 
@@ -222,7 +225,7 @@ The implementation roadmap lives in `.features/README.md`.
 
 - There is currently no dedicated lint or test pipeline in this repo.
 - The primary project-level verification command is `npm run build`.
-- For packaging validation, use `npm run dist:win:msix` on Windows.
+- For packaging validation, use `npm run dist:win:release` on Windows.
 
 ## License
 

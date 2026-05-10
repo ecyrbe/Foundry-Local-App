@@ -13,7 +13,9 @@
     "dev:renderer": "vite",
     "start": "npm run build && electron .",
     "dist:win:unpacked": "npm run assets:icons && npm run build && electron-builder --config electron-builder.config.mjs --dir --win --x64",
-    "dist:win:msix": "npm run dist:win:unpacked && node scripts/convert-appx-to-msix.mjs"
+    "dist:win:portable": "npm run assets:icons && npm run build && electron-builder --config electron-builder.config.mjs --win portable --x64",
+    "dist:win:installer": "npm run assets:icons && npm run build && electron-builder --config electron-builder.config.mjs --win nsis --x64",
+    "dist:win:release": "npm run assets:icons && npm run build && electron-builder --config electron-builder.config.mjs --win portable nsis --x64"
   },
   "keywords": [
     "electron",

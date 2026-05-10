@@ -1,0 +1,36 @@
+name: Release Windows Builds
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build portable executable and installer
+        run: npm run dist:win:release
+
+      - name: Upload Windows artifacts to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/foundry-app.exe
+            release/foundry-app-setup.exe
+          generate_release_notes: true
