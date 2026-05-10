@@ -30,7 +30,7 @@ function ChatPage(props: {
   const messageListRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (props.activeSession && props.availableModels.some((model) => model.id === props.activeSession.session.modelId)) {
+    if (props.activeSession && props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)) {
       setSelectedModelId(props.activeSession.session.modelId);
       return;
     }
@@ -53,13 +53,13 @@ function ChatPage(props: {
   }, [props.activeSession, props.isSendingMessage]);
 
   const activeSessionSummary = props.activeSession
-    ? props.sessions.find((session) => session.id === props.activeSession.session.id) ?? null
+    ? props.sessions.find((session) => session.id === props.activeSession?.session.id) ?? null
     : null;
   const activeSessionModelAction = activeSessionSummary ? props.modelActionByModelId[activeSessionSummary.modelId] : undefined;
   const activeSessionModelLoaded = activeSessionSummary?.modelLoaded ?? false;
   const activeSessionIsStreaming = activeSessionSummary?.isStreaming ?? false;
   const activeModelStillAvailable = props.activeSession
-    ? props.availableModels.some((model) => model.id === props.activeSession.session.modelId)
+    ? props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)
     : true;
   const canChangeModel = Boolean(
     props.activeSession
