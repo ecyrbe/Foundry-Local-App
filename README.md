@@ -16,6 +16,7 @@ Foundry Local App packages the SDK behind a native Electron shell and a modern R
 - Browse the local Foundry model catalog with rich metadata.
 - Download, remove, load, and unload models from the same Catalog experience.
 - Manage persisted chat sessions backed by downloaded local models.
+- Render Chat assistant responses as Markdown with syntax-highlighted code blocks and one-click copy actions.
 - Capture live local audio transcription with persisted transcript sessions and audio settings.
 - Inspect runtime status, web service state, and execution provider registration.
 - Package the app for Windows and publish signed `.msix` releases with GitHub Actions.
@@ -24,7 +25,14 @@ Foundry Local App packages the SDK behind a native Electron shell and a modern R
 
 ### Chat
 
-Run local conversations against downloaded models with persistent session history and clear model state. The Chat page is built for fast iteration, letting you reopen prior threads, keep context across restarts, and move from model selection to response generation in a single workspace.
+Run local conversations against downloaded models with persistent session history, clear model state, and richer response rendering.
+
+Chat highlights:
+
+- 💬 Persistent local chat sessions
+- 📝 Assistant responses rendered as Markdown
+- 🎨 Syntax-highlighted fenced code blocks
+- 📋 One-click copy for generated code blocks
 
 ![Chat view](./docs/chat.png)
 
@@ -176,6 +184,7 @@ Implemented or actively targeted:
 - Catalog browsing and local model management
 - Downloaded-model filtering and loaded-state badges
 - Persisted local chat sessions
+- Markdown chat rendering with syntax-highlighted code blocks and easy copy/paste
 - Live audio transcription with persisted transcript sessions
 - Runtime and web service controls
 - Execution provider discovery and registration
