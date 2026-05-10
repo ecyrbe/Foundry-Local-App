@@ -1,6 +1,6 @@
 {
   "name": "foundry-local-app",
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "Electron shell for exposing the Foundry Local SDK.",
   "main": "dist/main.js",
   "type": "module",
