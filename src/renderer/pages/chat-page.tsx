@@ -149,6 +149,17 @@ function ChatPage(props: {
         onChange={(event) => {
           props.onDraftMessageChange(event.target.value);
         }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+            return;
+          }
+
+          event.preventDefault();
+
+          if (canSend) {
+            void props.onSendMessage();
+          }
+        }}
         placeholder={props.activeSession ? 'Message the current session' : 'Create a session first'}
         className="min-h-28 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
         disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage || activeSessionIsStreaming}
