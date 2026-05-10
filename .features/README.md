@@ -24,6 +24,7 @@ Current intended scope:
 7. `07-updates-and-version-awareness.md`
 8. `08-structured-output-playground.md`
 9. `09-live-audio-transcription.md`
+10. `10-streaming-markdown-chat-rendering.md`
 
 ## Notes
 

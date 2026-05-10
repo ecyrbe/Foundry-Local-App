@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { LibraryBig, LoaderCircle, Play, SendHorizontal, Square, XCircle } from 'lucide-react';
+import { AssistantMarkdown } from '@/components/assistant-markdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -262,7 +263,9 @@ function ChatPage(props: {
                         ? 'border border-destructive/30 bg-destructive/10 text-destructive'
                         : 'border border-border/70 bg-card/90 text-card-foreground'
                   )}>
-                    <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                    {message.role === 'assistant' && !message.failed
+                      ? <AssistantMarkdown content={message.content} isStreaming={activeSessionIsStreaming && props.activeSession?.messages.at(-1)?.id === message.id} />
+                      : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
                     <p className={cn('mt-3 text-[11px]', message.role === 'user' ? 'text-primary-foreground/80' : message.failed ? 'text-destructive/80' : 'text-muted-foreground')}>
                       {formatTimestamp(message.createdAt)}
                     </p>
