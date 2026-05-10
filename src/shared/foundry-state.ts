@@ -121,6 +121,7 @@ export interface FoundryChatSessionView {
   updatedAt: string;
   messageCount: number;
   modelLoaded: boolean;
+  isStreaming: boolean;
 }
 
 export interface FoundryChatSessionDetailView {
@@ -139,6 +140,10 @@ export interface FoundryChatSendResultView {
 
 export type FoundryChatStreamEvent =
   | {
+    type: 'assistant-message-streaming-started';
+    sessionId: string;
+  }
+  | {
     type: 'assistant-message-started';
     sessionId: string;
     message: FoundryChatMessageView;
@@ -154,6 +159,7 @@ export type FoundryChatStreamEvent =
     sessionId: string;
     messageId: string;
     responseId: string | null;
+    stopped: boolean;
   }
   | {
     type: 'assistant-message-failed';
@@ -237,6 +243,7 @@ export interface FoundryAppApi {
   loadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   unloadChatSessionModel: (sessionId: string) => Promise<FoundryChatView>;
   sendChatMessage: (sessionId: string, message: string) => Promise<FoundryChatSendResultView>;
+  stopChatResponse: (sessionId: string) => Promise<FoundryChatSessionDetailView>;
   getTranscriptSessions: () => Promise<FoundryTranscriptView>;
   getTranscriptSession: (sessionId: string) => Promise<FoundryTranscriptSessionDetailView>;
   createTranscriptSession: (modelId: string) => Promise<FoundryTranscriptSessionDetailView>;

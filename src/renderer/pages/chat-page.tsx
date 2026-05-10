@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { LibraryBig, LoaderCircle, Play, SendHorizontal, XCircle } from 'lucide-react';
+import { LibraryBig, LoaderCircle, Play, SendHorizontal, Square, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -13,12 +13,14 @@ function ChatPage(props: {
   draftMessage: string;
   isCreatingSession: boolean;
   isLoadingSession: boolean;
+  isStoppingMessage: boolean;
   isSendingMessage: boolean;
   modelActionByModelId: Record<string, 'loading' | 'unloading'>;
   onLoadSessionModel: (sessionId: string) => Promise<void>;
   onOpenCatalog: () => void;
   onDraftMessageChange: (value: string) => void;
   onSendMessage: () => Promise<void>;
+  onStopMessage: () => Promise<void>;
   onUnloadSessionModel: (sessionId: string) => Promise<void>;
   onUpdateSessionModel: (sessionId: string, modelId: string) => Promise<void>;
   sessions: FoundryChatSessionView[];
@@ -55,6 +57,7 @@ function ChatPage(props: {
     : null;
   const activeSessionModelAction = activeSessionSummary ? props.modelActionByModelId[activeSessionSummary.modelId] : undefined;
   const activeSessionModelLoaded = activeSessionSummary?.modelLoaded ?? false;
+  const activeSessionIsStreaming = activeSessionSummary?.isStreaming ?? false;
   const activeModelStillAvailable = props.activeSession
     ? props.availableModels.some((model) => model.id === props.activeSession.session.modelId)
     : true;
@@ -71,7 +74,10 @@ function ChatPage(props: {
     && !activeSessionModelAction
     && props.draftMessage.trim()
     && !props.isSendingMessage
+    && !activeSessionIsStreaming
   );
+  const showStopAction = Boolean(props.activeSession && (props.isSendingMessage || activeSessionIsStreaming || props.isStoppingMessage));
+  const canStop = Boolean(props.activeSession && (props.isSendingMessage || activeSessionIsStreaming) && !props.isStoppingMessage);
 
   const renderModelControl = () => {
     if (!props.activeSession) {
@@ -144,7 +150,7 @@ function ChatPage(props: {
         }}
         placeholder={props.activeSession ? 'Message the current session' : 'Create a session first'}
         className="min-h-28 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage}
+        disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage || activeSessionIsStreaming}
       />
 
       <div className="flex flex-col gap-3 border-t border-border/60 px-3 pt-3 sm:flex-row sm:items-end sm:justify-between">
@@ -180,19 +186,33 @@ function ChatPage(props: {
                   ? 'Model is loading for this session.'
                   : activeSessionModelAction === 'unloading'
                     ? 'Model is unloading for this session.'
-                    : activeSessionModelLoaded
-                      ? 'Plain-text responses first. Session history is stored locally by the app.'
-                      : 'Load this session model from the sidebar before sending messages.'
+                    : showStopAction
+                      ? 'Response is streaming now. Use Stop if the model gets stuck or loops.'
+                      : activeSessionModelLoaded
+                        ? 'Plain-text responses first. Session history is stored locally by the app.'
+                        : 'Load this session model from the sidebar before sending messages.'
                 : 'This session model is no longer downloaded. Open Catalog from Settings to re-download it.'
               : 'Create a session from the sidebar to start.'}
           </p>
         </div>
 
-        <Button type="button" disabled={!canSend} onClick={() => {
+        <Button type="button" disabled={!canSend && !canStop} onClick={() => {
+          if (canStop) {
+            void props.onStopMessage();
+            return;
+          }
+
           void props.onSendMessage();
         }}>
-          {props.isSendingMessage ? <LoaderCircle className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
-          Send
+          {showStopAction
+            ? (
+                <span className="relative inline-flex size-4 items-center justify-center">
+                  <LoaderCircle className="absolute inset-0 size-4 animate-spin" />
+                  <Square className={cn('size-2.5 fill-current', props.isStoppingMessage ? 'animate-pulse' : undefined)} />
+                </span>
+              )
+              : <SendHorizontal className="size-4" />}
+          {showStopAction ? 'Stop' : 'Send'}
         </Button>
       </div>
     </div>

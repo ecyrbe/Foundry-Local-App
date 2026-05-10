@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { DeviceInfo, IoStreamRead } from 'naudiodon2';
-import { FoundryLocalManager, getOutputText, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel, type ResponseInputItem } from 'foundry-local-sdk';
+import { FoundryLocalManager, getOutputText, type EpDownloadResult, type EpInfo, type FoundryLocalConfig, type IModel, type ResponseInputItem, type StreamingEvent } from 'foundry-local-sdk';
 import {
   type FoundryAudioInputDeviceView,
   type FoundryAudioSettingsInput,
@@ -145,6 +145,12 @@ interface ActiveTranscriptRuntime {
   stopPromise: Promise<void> | null;
 }
 
+interface ActiveChatRuntime {
+  abortController: AbortController;
+  sessionId: string;
+  stopped: boolean;
+}
+
 const defaultAudioSettings: StoredAudioSettings = {
   selectedInputDeviceId: null,
   sampleRate: 16000,
@@ -180,6 +186,8 @@ export class FoundryAppService {
   private audioSettings: StoredAudioSettings | null = null;
 
   private activeTranscriptRuntime: ActiveTranscriptRuntime | null = null;
+
+  private activeChatRuntime: ActiveChatRuntime | null = null;
 
   private readonly downloadProgressListeners = new Set<(event: FoundryDownloadProgressEvent) => void>();
 
@@ -302,6 +310,7 @@ export class FoundryAppService {
     }
 
     this.manager.stopWebService();
+    await this.markAllChatSessionsAsNeedingHydration();
     await this.getAppState();
 
     return this.readRuntimeView();
@@ -403,7 +412,7 @@ export class FoundryAppService {
 
     const chatSession = await this.requireChatSession(sessionId);
 
-    return toChatSessionDetailView(chatSession);
+    return toChatSessionDetailView(chatSession, this.activeChatRuntime?.sessionId === chatSession.id);
   }
 
   async createChatSession(modelId: string): Promise<FoundryChatSessionDetailView> {
@@ -446,7 +455,7 @@ export class FoundryAppService {
 
     await this.persistChatSessionsState();
 
-    return toChatSessionDetailView(chatSession);
+    return toChatSessionDetailView(chatSession, false);
   }
 
   async createTranscriptSession(modelId: string): Promise<FoundryTranscriptSessionDetailView> {
@@ -533,7 +542,7 @@ export class FoundryAppService {
 
     await this.persistChatSessionsState();
 
-    return toChatSessionDetailView(chatSession);
+    return toChatSessionDetailView(chatSession, this.activeChatRuntime?.sessionId === chatSession.id);
   }
 
   async updateTranscriptSessionModel(sessionId: string, modelId: string): Promise<FoundryTranscriptSessionDetailView> {
@@ -739,6 +748,15 @@ export class FoundryAppService {
     }
 
     const chatSession = chatSessionsState.sessions[sessionIndex];
+
+    if (this.activeChatRuntime && this.activeChatRuntime.sessionId !== chatSession.id) {
+      throw new Error('Wait for the current streamed response to finish before using another chat session.');
+    }
+
+    if (this.activeChatRuntime?.sessionId === chatSession.id) {
+      throw new Error('This session is already streaming a response.');
+    }
+
     const model = await this.manager.catalog.getModelVariant(chatSession.modelId);
 
     if (!model.isCached) {
@@ -753,7 +771,18 @@ export class FoundryAppService {
       this.manager.startWebService();
     }
 
-    const responsesClient = this.manager.createResponsesClient(chatSession.modelId);
+    const webServiceBaseUrl = this.manager.urls[0];
+
+    if (!webServiceBaseUrl) {
+      throw new Error('Foundry Local web service is unavailable.');
+    }
+
+    const abortController = new AbortController();
+    const activeChatRuntime: ActiveChatRuntime = {
+      abortController,
+      sessionId: chatSession.id,
+      stopped: false
+    };
     const userMessage: FoundryChatMessageView = {
       id: randomUUID(),
       role: 'user',
@@ -766,19 +795,24 @@ export class FoundryAppService {
     chatSessionsState.activeSessionId = chatSession.id;
     await this.persistChatSessionsState();
 
-    try {
-      const assistantMessageId = randomUUID();
-      const assistantMessage: FoundryChatMessageView = {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString()
-      };
-      let responseId: string | null = null;
+    const assistantMessageId = randomUUID();
+    const assistantMessage: FoundryChatMessageView = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString()
+    };
+    let responseId: string | null = null;
 
+    try {
       chatSession.messages.push(assistantMessage);
       chatSession.updatedAt = assistantMessage.createdAt;
       await this.persistChatSessionsState();
+      this.activeChatRuntime = activeChatRuntime;
+      this.emitChatStreamEvent({
+        type: 'assistant-message-streaming-started',
+        sessionId: chatSession.id
+      });
       this.emitChatStreamEvent({
         type: 'assistant-message-started',
         sessionId: chatSession.id,
@@ -796,7 +830,7 @@ export class FoundryAppService {
           store: true
         };
 
-      await responsesClient.createStreaming(requestInput, (event) => {
+      await this.streamChatResponse(webServiceBaseUrl, chatSession.modelId, requestInput, requestOptions, activeChatRuntime.abortController.signal, (event) => {
         if (event.type === 'response.output_text.delta') {
           assistantMessage.content += event.delta;
           this.emitChatStreamEvent({
@@ -828,10 +862,10 @@ export class FoundryAppService {
         if (event.type === 'error') {
           throw new Error(event.message ?? 'Chat request failed.');
         }
-      }, requestOptions);
+      });
 
       if (!assistantMessage.content) {
-        assistantMessage.content = 'No response text returned.';
+        assistantMessage.content = activeChatRuntime.stopped ? 'Response stopped.' : 'No response text returned.';
       }
 
       chatSession.lastResponseId = responseId;
@@ -847,13 +881,41 @@ export class FoundryAppService {
         type: 'assistant-message-completed',
         sessionId: chatSession.id,
         messageId: assistantMessage.id,
-        responseId
+        responseId,
+        stopped: activeChatRuntime.stopped
       });
 
       return {
-        session: toChatSessionDetailView(chatSession)
+        session: toChatSessionDetailView(chatSession, false)
       };
     } catch (error) {
+      if (activeChatRuntime.stopped && isAbortError(error)) {
+        if (!assistantMessage.content) {
+          assistantMessage.content = 'Response stopped.';
+        }
+
+        chatSession.lastResponseId = responseId;
+        chatSession.needsContextHydration = false;
+        chatSession.updatedAt = new Date().toISOString();
+
+        if (chatSession.messages.length === 2) {
+          chatSession.title = buildChatSessionTitle(trimmedMessage);
+        }
+
+        await this.persistChatSessionsState();
+        this.emitChatStreamEvent({
+          type: 'assistant-message-completed',
+          sessionId: chatSession.id,
+          messageId: assistantMessage.id,
+          responseId,
+          stopped: true
+        });
+
+        return {
+          session: toChatSessionDetailView(chatSession, false)
+        };
+      }
+
       const failedAssistantMessage: FoundryChatMessageView = {
         id: randomUUID(),
         role: 'assistant',
@@ -872,7 +934,27 @@ export class FoundryAppService {
       });
 
       throw error;
+    } finally {
+      if (this.activeChatRuntime?.sessionId === chatSession.id) {
+        this.activeChatRuntime = null;
+      }
     }
+  }
+
+  async stopChatResponse(sessionId: string): Promise<FoundryChatSessionDetailView> {
+    await this.initialize();
+
+    const chatSession = await this.requireChatSession(sessionId);
+    const activeChatRuntime = this.activeChatRuntime;
+
+    if (!activeChatRuntime || activeChatRuntime.sessionId !== sessionId) {
+      return toChatSessionDetailView(chatSession, false);
+    }
+
+    activeChatRuntime.stopped = true;
+    activeChatRuntime.abortController.abort();
+
+    return toChatSessionDetailView(chatSession, true);
   }
 
   async startTranscriptSession(sessionId: string): Promise<FoundryTranscriptSessionDetailView> {
@@ -1224,7 +1306,9 @@ export class FoundryAppService {
         sessions: Array.isArray(parsedState.sessions)
           ? parsedState.sessions.filter(isStoredChatSession).map((session) => ({
             ...session,
-            needsContextHydration: session.needsContextHydration ?? (session.lastResponseId !== null)
+            // Response IDs are only safe to reuse within the same running service.
+            // After an app restart, replay the stored transcript once to rebuild context.
+            needsContextHydration: session.lastResponseId !== null
           }))
           : []
       };
@@ -1352,6 +1436,24 @@ export class FoundryAppService {
         session.needsContextHydration = true;
         didChange = true;
       }
+    }
+
+    if (didChange) {
+      await this.persistChatSessionsState();
+    }
+  }
+
+  private async markAllChatSessionsAsNeedingHydration(): Promise<void> {
+    const chatSessionsState = await this.readChatSessionsState();
+    let didChange = false;
+
+    for (const session of chatSessionsState.sessions) {
+      if (session.lastResponseId === null || session.needsContextHydration) {
+        continue;
+      }
+
+      session.needsContextHydration = true;
+      didChange = true;
     }
 
     if (didChange) {
@@ -1593,7 +1695,11 @@ export class FoundryAppService {
   }
 
   private async toChatSessionViews(sessions: StoredChatSession[]): Promise<FoundryChatSessionView[]> {
-    return Promise.all(sessions.map(async (chatSession) => toChatSessionView(chatSession, await this.isSessionModelLoaded(chatSession.modelId))));
+    return Promise.all(sessions.map(async (chatSession) => toChatSessionView(
+      chatSession,
+      await this.isSessionModelLoaded(chatSession.modelId),
+      this.activeChatRuntime?.sessionId === chatSession.id
+    )));
   }
 
   private async toTranscriptSessionViews(sessions: StoredTranscriptSession[]): Promise<FoundryTranscriptSessionView[]> {
@@ -1625,6 +1731,41 @@ export class FoundryAppService {
 
     const loadedModels = await this.manager.catalog.getLoadedModels();
     return loadedModels.length > 0;
+  }
+
+  private async streamChatResponse(
+    baseUrl: string,
+    modelId: string,
+    input: string | ResponseInputItem[],
+    options: { previous_response_id?: string; store: boolean },
+    signal: AbortSignal,
+    onEvent: (event: StreamingEvent) => void
+  ): Promise<void> {
+    const response = await fetch(`${baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream'
+      },
+      body: JSON.stringify({
+        model: modelId,
+        input,
+        ...options,
+        stream: true
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Responses API error (${response.status}): ${body}`);
+    }
+
+    if (!response.body) {
+      throw new Error('Streaming response has no body.');
+    }
+
+    await parseSseStream(response.body, onEvent);
   }
 
   private emitDownloadProgress(event: FoundryDownloadProgressEvent): void {
@@ -1675,7 +1816,7 @@ function toExecutionProviderView(ep: EpInfo) {
   };
 }
 
-function toChatSessionView(chatSession: StoredChatSession, modelLoaded: boolean): FoundryChatSessionView {
+function toChatSessionView(chatSession: StoredChatSession, modelLoaded: boolean, isStreaming: boolean): FoundryChatSessionView {
   return {
     id: chatSession.id,
     title: chatSession.title,
@@ -1686,7 +1827,8 @@ function toChatSessionView(chatSession: StoredChatSession, modelLoaded: boolean)
     createdAt: chatSession.createdAt,
     updatedAt: chatSession.updatedAt,
     messageCount: chatSession.messages.length,
-    modelLoaded
+    modelLoaded,
+    isStreaming
   };
 }
 
@@ -1705,9 +1847,9 @@ function toTranscriptSessionView(transcriptSession: StoredTranscriptSession, mod
   };
 }
 
-function toChatSessionDetailView(chatSession: StoredChatSession): FoundryChatSessionDetailView {
+function toChatSessionDetailView(chatSession: StoredChatSession, isStreaming: boolean): FoundryChatSessionDetailView {
   return {
-    session: toChatSessionView(chatSession, false),
+    session: toChatSessionView(chatSession, false, isStreaming),
     messages: chatSession.messages.map((message) => ({ ...message }))
   };
 }
@@ -1752,6 +1894,56 @@ function toResponseInputItems(messages: FoundryChatMessageView[]): ResponseInput
       }
     ]
     }));
+}
+
+async function parseSseStream(stream: ReadableStream<Uint8Array>, onEvent: (event: StreamingEvent) => void): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    while (true) {
+      const separatorIndex = buffer.indexOf('\n\n');
+
+      if (separatorIndex === -1) {
+        break;
+      }
+
+      const rawChunk = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+
+      if (!rawChunk.trim()) {
+        continue;
+      }
+
+      const dataLines = rawChunk
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart());
+
+      const payload = dataLines.join('\n').trim();
+
+      if (!payload || payload === '[DONE]') {
+        continue;
+      }
+
+      onEvent(JSON.parse(payload) as StreamingEvent);
+    }
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError';
 }
 
 function isStoredChatSession(value: unknown): value is StoredChatSession {

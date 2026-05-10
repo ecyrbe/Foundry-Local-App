@@ -20,6 +20,7 @@ const foundryLocalAppApi: FoundryAppApi = {
   loadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:load-chat-session-model', sessionId),
   unloadChatSessionModel: (sessionId) => ipcRenderer.invoke('foundry-local-app:unload-chat-session-model', sessionId),
   sendChatMessage: (sessionId, message) => ipcRenderer.invoke('foundry-local-app:send-chat-message', sessionId, message),
+  stopChatResponse: (sessionId) => ipcRenderer.invoke('foundry-local-app:stop-chat-response', sessionId),
   getTranscriptSessions: () => ipcRenderer.invoke('foundry-local-app:get-transcript-sessions'),
   getTranscriptSession: (sessionId) => ipcRenderer.invoke('foundry-local-app:get-transcript-session', sessionId),
   createTranscriptSession: (modelId) => ipcRenderer.invoke('foundry-local-app:create-transcript-session', modelId),

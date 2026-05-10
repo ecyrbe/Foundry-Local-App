@@ -460,6 +460,7 @@ function AppShell(props: {
   isRuntimeRefreshing: boolean;
   isSavingAudioSettings: boolean;
   isSendingChatMessage: boolean;
+  isStoppingChatMessage: boolean;
   isStartingTranscript: boolean;
   isStoppingTranscript: boolean;
   isTranscriptSessionLoading: boolean;
@@ -481,6 +482,7 @@ function AppShell(props: {
   onSaveAudioSettings: (settings: FoundryAudioSettingsInput) => Promise<void>;
   onSendChatMessage: () => Promise<void>;
   onSetChatDraftMessage: (value: string) => void;
+  onStopChatMessage: () => Promise<void>;
   onStartTranscript: () => Promise<void>;
   onStopTranscript: () => Promise<void>;
   onToggleWebService: () => Promise<void>;
@@ -607,11 +609,13 @@ function AppShell(props: {
                     isCreatingSession={props.isCreatingChatSession}
                     isLoadingSession={props.isChatSessionLoading}
                     isSendingMessage={props.isSendingChatMessage}
+                    isStoppingMessage={props.isStoppingChatMessage}
                     modelActionByModelId={props.chatModelActionByModelId}
                     onLoadSessionModel={props.onLoadChatSessionModel}
                     onOpenCatalog={openCatalog}
                     onDraftMessageChange={props.onSetChatDraftMessage}
                     onSendMessage={props.onSendChatMessage}
+                    onStopMessage={props.onStopChatMessage}
                     onUnloadSessionModel={props.onUnloadChatSessionModel}
                     onUpdateSessionModel={props.onUpdateChatSessionModel}
                     sessions={props.chatSessions}
@@ -685,11 +689,13 @@ function AppShell(props: {
                     isCreatingSession={props.isCreatingChatSession}
                     isLoadingSession={props.isChatSessionLoading}
                     isSendingMessage={props.isSendingChatMessage}
+                    isStoppingMessage={props.isStoppingChatMessage}
                     modelActionByModelId={props.chatModelActionByModelId}
                     onLoadSessionModel={props.onLoadChatSessionModel}
                     onOpenCatalog={openCatalog}
                     onDraftMessageChange={props.onSetChatDraftMessage}
                     onSendMessage={props.onSendChatMessage}
+                    onStopMessage={props.onStopChatMessage}
                     onUnloadSessionModel={props.onUnloadChatSessionModel}
                     onUpdateSessionModel={props.onUpdateChatSessionModel}
                     sessions={props.chatSessions}
@@ -739,6 +745,7 @@ export function App() {
   const [isChatSessionLoading, setIsChatSessionLoading] = useState(true);
   const [isCreatingChatSession, setIsCreatingChatSession] = useState(false);
   const [isSendingChatMessage, setIsSendingChatMessage] = useState(false);
+  const [isStoppingChatMessage, setIsStoppingChatMessage] = useState(false);
   const [deletingChatSessionId, setDeletingChatSessionId] = useState<string | null>(null);
   const [chatModelActionByModelId, setChatModelActionByModelId] = useState<Record<string, 'loading' | 'unloading'>>({});
   const [isTranscriptSessionLoading, setIsTranscriptSessionLoading] = useState(true);
@@ -987,6 +994,21 @@ export function App() {
     }
 
     return appApi.onChatStreamEvent((streamEvent: FoundryChatStreamEvent) => {
+      if (streamEvent.type === 'assistant-message-streaming-started') {
+        setChatSessions((currentValue) => currentValue.map((session) => ({
+          ...session,
+          isStreaming: session.id === streamEvent.sessionId
+        })));
+        setActiveChatSession((currentValue) => currentValue && currentValue.session.id === streamEvent.sessionId ? {
+          ...currentValue,
+          session: {
+            ...currentValue.session,
+            isStreaming: true
+          }
+        } : currentValue);
+        return;
+      }
+
       setActiveChatSession((currentValue) => {
         if (!currentValue || currentValue.session.id !== streamEvent.sessionId) {
           return currentValue;
@@ -1018,9 +1040,16 @@ export function App() {
         }
 
         if (streamEvent.type === 'assistant-message-completed') {
+          setIsStoppingChatMessage(false);
+          setChatSessions((currentValue) => currentValue.map((session) => session.id === streamEvent.sessionId ? {
+            ...session,
+            isStreaming: false
+          } : session));
+
           return {
             session: {
               ...currentValue.session,
+              isStreaming: false,
               lastResponseId: streamEvent.responseId,
               updatedAt: new Date().toISOString()
             },
@@ -1041,6 +1070,14 @@ export function App() {
           messages: [...currentValue.messages, streamEvent.message]
         };
       });
+
+      if (streamEvent.type === 'assistant-message-failed') {
+        setIsStoppingChatMessage(false);
+        setChatSessions((currentValue) => currentValue.map((session) => session.id === streamEvent.sessionId ? {
+          ...session,
+          isStreaming: false
+        } : session));
+      }
     });
   }, []);
 
@@ -1440,6 +1477,27 @@ export function App() {
     }
   };
 
+  const stopChatMessage = async (): Promise<void> => {
+    const appApi = globalThis.window?.foundryLocalApp;
+
+    if (!activeChatSession || !appApi || typeof appApi.stopChatResponse !== 'function') {
+      return;
+    }
+
+    setIsStoppingChatMessage(true);
+    setChatError(null);
+
+    try {
+      const sessionDetail = await appApi.stopChatResponse(activeChatSession.session.id);
+      setActiveChatSession(sessionDetail);
+      const chatView = await appApi.getChatSessions();
+      setChatSessions(chatView.sessions);
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'Failed to stop chat response.');
+      setIsStoppingChatMessage(false);
+    }
+  };
+
   const loadChatSessionModel = async (sessionId: string): Promise<void> => {
     const appApi = globalThis.window?.foundryLocalApp;
     const session = chatSessions.find((entry) => entry.id === sessionId);
@@ -1753,6 +1811,7 @@ export function App() {
       isRuntimeRefreshing={isRuntimeRefreshing}
       isSavingAudioSettings={isSavingAudioSettings}
       isSendingChatMessage={isSendingChatMessage}
+      isStoppingChatMessage={isStoppingChatMessage}
       isStartingTranscript={isStartingTranscript}
       isStoppingTranscript={isStoppingTranscript}
       isTranscriptSessionLoading={isTranscriptSessionLoading}
@@ -1778,6 +1837,7 @@ export function App() {
       onSaveAudioSettings={saveAudioSettings}
       onSendChatMessage={sendChatMessage}
       onSetChatDraftMessage={setChatDraftMessage}
+      onStopChatMessage={stopChatMessage}
       onStartTranscript={startTranscript}
       onStopTranscript={stopTranscript}
       onToggleWebService={toggleWebService}
