@@ -11,10 +11,18 @@ let unsubscribeFromEpDownloadProgress: (() => void) | null = null;
 let unsubscribeFromChatStream: (() => void) | null = null;
 let unsubscribeFromTranscriptStream: (() => void) | null = null;
 
+const getWindowIconPath = (): string => (
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(currentDirPath, '../build/generated/icon.ico')
+);
+
 const createWindow = (): void => {
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
+    autoHideMenuBar: true,
+    icon: getWindowIconPath(),
     webPreferences: {
       contextIsolation: true,
       preload: path.join(currentDirPath, 'preload.js'),
@@ -22,6 +30,7 @@ const createWindow = (): void => {
     }
   });
 
+  window.setMenuBarVisibility(false);
   window.loadFile(path.join(currentDirPath, '../renderer-dist/index.html'));
 };
 

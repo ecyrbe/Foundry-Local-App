@@ -1,4 +1,4 @@
-# Foundry Local App
+# <img src="./build/icon.svg" alt="F" width="64" height="64" align="center" />oundry Local App
 
 [![Electron](https://img.shields.io/badge/Electron-35-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)

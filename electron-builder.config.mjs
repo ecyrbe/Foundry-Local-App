@@ -13,6 +13,12 @@ export default {
     'renderer-dist/**/*',
     'package.json'
   ],
+  extraResources: [
+    {
+      from: 'build/generated/icon.ico',
+      to: 'icon.ico'
+    }
+  ],
   extraMetadata: {
     main: 'dist/main.js'
   },
