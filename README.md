@@ -38,19 +38,40 @@ Chat highlights:
 
 ### Transcript
 
-Transcribe live microphone audio with local audio-capable models while keeping a dedicated transcript history. The Transcript page combines persisted sessions, live preview text, and quick access to model state so you can move between past captures and active transcription without losing context.
+Transcribe live microphone audio with local audio-capable models while keeping a dedicated transcript history.
+
+Transcript highlights:
+
+- 🎙️ Live microphone transcription with local models
+- 🫧 Separate live preview text during active capture
+- 🗂️ Persistent transcript sessions and history
+- ⚙️ Quick access to model state and audio settings
 
 ![Transcript view](./docs/transcript.png)
 
 ### Catalog
 
-Browse the local model catalog, filter to downloaded models, and manage the full model lifecycle from one place. Catalog is the operational hub for discovering models, checking metadata, and triggering download, remove, load, and unload actions without switching views.
+Browse the local model catalog, filter to downloaded models, and manage the full model lifecycle from one place.
+
+Catalog highlights:
+
+- 🔎 Rich model discovery and filtering
+- 📦 Downloaded-model management in one view
+- ▶️ Load and unload actions with clear status
+- 🧾 Metadata for model capabilities and variants
 
 ![Catalog view](./docs/catalog.png)
 
 ### Settings And Runtime
 
-Control the app experience and local runtime from a single administration surface. Settings and Runtime brings together theme preferences, embedded web service controls, execution provider registration, and status signals that help you keep local inference ready.
+Control the app experience and local runtime from a single administration surface.
+
+Settings and Runtime highlights:
+
+- 🌗 Theme preference controls
+- 🌐 Embedded web service start and stop controls
+- 🧩 Execution provider registration and status
+- 🎛️ Runtime and audio configuration in one place
 
 ![Settings and runtime view](./docs/settings.png)
 
