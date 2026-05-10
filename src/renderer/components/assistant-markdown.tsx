@@ -132,9 +132,10 @@ function CodeBlock(props: { code: string; language?: string; resolvedTheme: Reso
   );
 }
 
-export function AssistantMarkdown(props: { content: string; isStreaming: boolean }) {
+export function AssistantMarkdown(props: { content: string; isStreaming: boolean; tone?: 'default' | 'inverted' }) {
   const { resolvedTheme } = useTheme();
   const markdown = normalizeStreamingMarkdown(props.content, props.isStreaming);
+  const tone = props.tone ?? 'default';
 
   return (
     <div className="space-y-3 break-words text-sm leading-6">
@@ -148,7 +149,7 @@ export function AssistantMarkdown(props: { content: string; isStreaming: boolean
           h1: ({ children }) => <h1 className="text-base font-semibold">{children}</h1>,
           h2: ({ children }) => <h2 className="text-sm font-semibold">{children}</h2>,
           h3: ({ children }) => <h3 className="text-sm font-semibold">{children}</h3>,
-          a: ({ href, children }) => <a className="text-primary underline underline-offset-2" href={href} target="_blank" rel="noreferrer">{children}</a>,
+          a: ({ href, children }) => <a className={cn('underline underline-offset-2', tone === 'inverted' ? 'text-primary-foreground' : 'text-primary')} href={href} target="_blank" rel="noreferrer">{children}</a>,
           code: ({ className, children, ...rest }) => {
             const match = /language-([\w-]+)/.exec(className || '');
             const language = match?.[1];
@@ -157,7 +158,7 @@ export function AssistantMarkdown(props: { content: string; isStreaming: boolean
 
             if (isInline) {
               return (
-                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]" {...rest}>
+                <code className={cn('rounded px-1.5 py-0.5 font-mono text-[0.85em]', tone === 'inverted' ? 'bg-primary-foreground/15 text-primary-foreground' : 'bg-muted')} {...rest}>
                   {children}
                 </code>
               );
