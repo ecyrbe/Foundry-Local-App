@@ -4,7 +4,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
-[![Release Workflow](https://img.shields.io/badge/release-windows%20builds%20workflow-available-2563EB)](./.github/workflows/release.yml)
+[![Release Workflow](https://github.com/ecyrbe/Foundry-Local-App/actions/workflows/release.yml/badge.svg)](https://github.com/ecyrbe/Foundry-Local-App/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
 Desktop UI for browsing, downloading, loading, and chatting with local models through the Microsoft Foundry Local SDK.
