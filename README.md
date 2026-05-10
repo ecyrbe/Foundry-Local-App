@@ -4,6 +4,7 @@
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev/)
+[![Version](https://img.shields.io/github/v/release/ecyrbe/Foundry-Local-App?display_name=tag)](https://github.com/ecyrbe/Foundry-Local-App/releases)
 [![Release Workflow](https://github.com/ecyrbe/Foundry-Local-App/actions/workflows/release.yml/badge.svg)](https://github.com/ecyrbe/Foundry-Local-App/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-MIT-111827)](./LICENSE)
 
