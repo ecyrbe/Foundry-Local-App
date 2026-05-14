@@ -514,10 +514,6 @@ export class FoundryAppService {
 
     const chatSession = chatSessionsState.sessions[sessionIndex];
 
-    if (chatSession.messages.length > 0) {
-      throw new Error('Only empty sessions can change models.');
-    }
-
     if (await this.isAnyModelLoaded()) {
       throw new Error('Unload the currently loaded model before changing session models.');
     }
@@ -535,7 +531,11 @@ export class FoundryAppService {
     chatSession.modelId = model.id;
     chatSession.modelName = model.info.displayName ?? model.info.name;
     chatSession.modelAlias = model.alias;
-    chatSession.title = buildChatSessionTitle(chatSession.modelName);
+
+    if (chatSession.messages.length === 0) {
+      chatSession.title = buildChatSessionTitle(chatSession.modelName);
+    }
+
     chatSession.lastResponseId = null;
     chatSession.needsContextHydration = false;
     chatSession.updatedAt = new Date().toISOString();

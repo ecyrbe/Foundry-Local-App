@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { LibraryBig, LoaderCircle, Play, SendHorizontal, Square, XCircle } from 'lucide-react';
 import { AssistantMarkdown } from '@/components/assistant-markdown';
+import { ModelPicker } from '@/components/domain/model-picker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,8 @@ function ChatPage(props: {
 }) {
   const [selectedModelId, setSelectedModelId] = useState('');
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const shouldRestoreComposerFocusRef = useRef(false);
 
   useEffect(() => {
     if (props.activeSession && props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)) {
@@ -53,18 +56,30 @@ function ChatPage(props: {
     container.scrollTop = container.scrollHeight;
   }, [props.activeSession, props.isSendingMessage]);
 
+  useEffect(() => {
+    const textarea = composerTextareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = '0px';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [props.draftMessage, props.activeSession]);
+
   const activeSessionSummary = props.activeSession
     ? props.sessions.find((session) => session.id === props.activeSession?.session.id) ?? null
     : null;
   const activeSessionModelAction = activeSessionSummary ? props.modelActionByModelId[activeSessionSummary.modelId] : undefined;
   const activeSessionModelLoaded = activeSessionSummary?.modelLoaded ?? false;
   const activeSessionIsStreaming = activeSessionSummary?.isStreaming ?? false;
+  const selectedModel = props.availableModels.find((model) => model.id === selectedModelId) ?? null;
   const activeModelStillAvailable = props.activeSession
     ? props.availableModels.some((model) => model.id === props.activeSession?.session.modelId)
     : true;
   const canChangeModel = Boolean(
     props.activeSession
-    && props.activeSession.messages.length === 0
+    && !activeSessionModelLoaded
     && props.stateLoadedModelCount === 0
     && !activeSessionModelAction
   );
@@ -79,6 +94,25 @@ function ChatPage(props: {
   );
   const showStopAction = Boolean(props.activeSession && (props.isSendingMessage || activeSessionIsStreaming || props.isStoppingMessage));
   const canStop = Boolean(props.activeSession && (props.isSendingMessage || activeSessionIsStreaming) && !props.isStoppingMessage);
+
+  useEffect(() => {
+    if (props.isSendingMessage || activeSessionIsStreaming) {
+      return;
+    }
+
+    if (!shouldRestoreComposerFocusRef.current) {
+      return;
+    }
+
+    const textarea = composerTextareaRef.current;
+
+    if (!textarea || textarea.disabled) {
+      return;
+    }
+
+    textarea.focus();
+    shouldRestoreComposerFocusRef.current = false;
+  }, [activeSessionIsStreaming, props.isSendingMessage]);
 
   const renderModelControl = () => {
     if (!props.activeSession) {
@@ -139,93 +173,92 @@ function ChatPage(props: {
     );
   };
 
-  const renderComposer = (centered: boolean) => (
-    <div className={cn(
-      'w-full rounded-[1.75rem] border border-border/70 bg-card/85 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/75',
-      centered ? 'max-w-3xl' : 'mx-auto max-w-4xl'
-    )}>
-      <textarea
-        value={props.draftMessage}
-        onChange={(event) => {
-          props.onDraftMessageChange(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
-            return;
-          }
+  const renderComposer = () => (
+    <div className="w-full">
+      <div className="flex gap-3">
+        <div className="min-w-0 flex-1 bg-transparent">
+          <textarea
+            ref={composerTextareaRef}
+            rows={1}
+            value={props.draftMessage}
+            onChange={(event) => {
+              props.onDraftMessageChange(event.target.value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+                return;
+              }
 
-          event.preventDefault();
+              event.preventDefault();
 
-          if (canSend) {
-            void props.onSendMessage();
-          }
-        }}
-        placeholder={props.activeSession ? 'Message the current session' : 'Create a session first'}
-        className="min-h-28 w-full resize-none border-0 bg-transparent px-3 py-3 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage || activeSessionIsStreaming}
-      />
-
-      <div className="flex flex-col gap-3 border-t border-border/60 px-3 pt-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-2">
-          {props.activeSession && props.activeSession.messages.length === 0 ? (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <select
-                value={selectedModelId}
-                onChange={(event) => {
-                  const nextModelId = event.target.value;
-                  setSelectedModelId(nextModelId);
-
-                  if (props.activeSession && nextModelId !== props.activeSession.session.modelId) {
-                    void props.onUpdateSessionModel(props.activeSession.session.id, nextModelId);
-                  }
-                }}
-                className="flex h-10 min-w-0 rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!canChangeModel || props.availableModels.length === 0 || props.isCreatingSession}
-              >
-                {props.availableModels.length === 0 ? <option value="">No downloaded text models available</option> : null}
-                {props.availableModels.map((model) => (
-                  <option key={model.id} value={model.id}>{model.name} ({model.alias})</option>
-                ))}
-              </select>
-              {!canChangeModel && props.activeSession ? <p className="text-xs text-muted-foreground">Unload the currently loaded model before changing this empty session.</p> : null}
-            </div>
-          ) : null}
-
-          <p className="text-xs text-muted-foreground">
-            {props.activeSession
-              ? activeModelStillAvailable
-                ? activeSessionModelAction === 'loading'
-                  ? 'Model is loading for this session.'
-                  : activeSessionModelAction === 'unloading'
-                    ? 'Model is unloading for this session.'
-                    : showStopAction
-                      ? 'Response is streaming now. Use Stop if the model gets stuck or loops.'
-                      : activeSessionModelLoaded
-                        ? 'Plain-text responses first. Session history is stored locally by the app.'
-                        : 'Load this session model from the sidebar before sending messages.'
-                : 'This session model is no longer downloaded. Open Catalog from Settings to re-download it.'
-              : 'Create a session from the sidebar to start.'}
-          </p>
+              if (canSend) {
+                shouldRestoreComposerFocusRef.current = document.activeElement === event.currentTarget;
+                void props.onSendMessage();
+              }
+            }}
+            placeholder={props.activeSession ? 'Ask a question...' : 'Load a model first to start chatting...'}
+            className="max-h-48 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent px-0 py-2 text-sm text-foreground outline-none ring-0 placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!props.activeSession || !activeModelStillAvailable || !activeSessionModelLoaded || Boolean(activeSessionModelAction) || props.isSendingMessage || activeSessionIsStreaming}
+          />
         </div>
 
-        <Button type="button" disabled={!canSend && !canStop} onClick={() => {
-          if (canStop) {
-            void props.onStopMessage();
-            return;
-          }
+        <div className="flex shrink-0 items-center gap-3 self-center">
+          {props.activeSession ? (
+            <ModelPicker
+              availableModels={props.availableModels}
+              disabled={!canChangeModel}
+              selectedModelId={selectedModelId}
+              title={selectedModel ? `${selectedModel.name} (${selectedModel.alias})` : props.activeSession.session.modelName}
+              onSelectModel={(modelId) => {
+                setSelectedModelId(modelId);
 
-          void props.onSendMessage();
-        }}>
-          {showStopAction
-            ? (
-                <span className="relative inline-flex size-4 items-center justify-center">
-                  <LoaderCircle className="absolute inset-0 size-4 animate-spin" />
-                  <Square className={cn('size-2.5 fill-current', props.isStoppingMessage ? 'animate-pulse' : undefined)} />
-                </span>
-              )
-              : <SendHorizontal className="size-4" />}
-          {showStopAction ? 'Stop' : 'Send'}
-        </Button>
+                if (props.activeSession && modelId !== props.activeSession.session.modelId) {
+                  void props.onUpdateSessionModel(props.activeSession.session.id, modelId);
+                }
+              }}
+            />
+          ) : null}
+
+          <Button type="button" className="h-10 self-auto" disabled={!canSend && !canStop} onClick={() => {
+            if (canStop) {
+              void props.onStopMessage();
+              return;
+            }
+
+            shouldRestoreComposerFocusRef.current = document.activeElement === composerTextareaRef.current;
+            void props.onSendMessage();
+          }}>
+            {showStopAction
+              ? (
+                  <span className="relative inline-flex size-4 items-center justify-center">
+                    <LoaderCircle className="absolute inset-0 size-4 animate-spin" />
+                    <Square className={cn('size-2.5 fill-current', props.isStoppingMessage ? 'animate-pulse' : undefined)} />
+                  </span>
+                )
+                : <SendHorizontal className="size-4" />}
+            {showStopAction ? 'Stop' : 'Send'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 min-w-0 space-y-2">
+        <p className="text-xs text-muted-foreground">
+          {props.activeSession
+            ? activeModelStillAvailable
+              ? activeSessionModelAction === 'loading'
+                ? 'Model is loading for this session.'
+                : activeSessionModelAction === 'unloading'
+                  ? 'Model is unloading for this session.'
+                  : showStopAction
+                    ? 'Response is streaming now. Use Stop if the model gets stuck or loops.'
+                    : activeSessionModelLoaded
+                      ? 'Plain-text responses first. Session history is stored locally by the app.'
+                      : canChangeModel
+                        ? 'This session model is unloaded. You can switch models here before sending messages.'
+                        : 'Unload the currently loaded model before changing this session model.'
+              : 'This session model is no longer downloaded. Open Catalog from Settings to re-download it.'
+            : 'Create a session from the sidebar to start.'}
+        </p>
       </div>
     </div>
   );
@@ -293,12 +326,13 @@ function ChatPage(props: {
             </div>
           </div>
 
-          <div className="border-t border-border/60 px-4 py-4 sm:px-6">
-            {renderComposer(false)}
+          <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background px-4 pt-[14px] sm:px-6">
+            {renderComposer()}
           </div>
         </>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 pt-18 sm:px-6">
+        <>
+          <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 pt-18 sm:px-6">
             <div className="flex w-full max-w-4xl flex-col items-center gap-8 text-center">
               <div className="space-y-3">
                 <h1 className="text-3xl font-semibold tracking-tight">How can I help?</h1>
@@ -307,12 +341,16 @@ function ChatPage(props: {
                   {renderModelControl()}
                 </div>
                 <p className="max-w-xl text-sm text-muted-foreground">
-                  {activeModelStillAvailable ? `This session uses ${props.activeSession.session.modelName}. Load the model from the sidebar, or switch models while the session is still empty.` : 'This session model is missing. Re-download it from Catalog or switch this empty session to another downloaded model.'}
+                  {activeModelStillAvailable ? `This session uses ${props.activeSession.session.modelName}. Load the model from the sidebar, or unload it to switch to another downloaded model.` : 'This session model is missing. Re-download it from Catalog or switch this session to another downloaded model.'}
                 </p>
+              </div>
             </div>
-            {renderComposer(true)}
           </div>
-        </div>
+
+          <div className="sticky bottom-0 z-10 border-t border-border/60 bg-background px-4 pt-[14px] sm:px-6">
+            {renderComposer()}
+          </div>
+        </>
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-6 pt-18 sm:px-6">
           <div className="space-y-3 text-center">
